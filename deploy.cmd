@@ -105,7 +105,7 @@ if errorlevel 1 (
   echo   ^(GSV on CPU or unavailable, Live2D engine unavailable^); the app is fine.
   exit /b 0
 )
-tar -xf "%TEMP%\%~1" -C "%DST%"
+"%SystemRoot%\System32\tar.exe" -xf "%TEMP%\%~1" -C "%DST%"
 if errorlevel 1 (
   echo   extraction failed - skipped.
   exit /b 0
