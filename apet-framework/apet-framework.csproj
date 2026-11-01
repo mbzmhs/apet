@@ -4,7 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>APet.Framework</RootNamespace>
     <AssemblyName>APet.Framework</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

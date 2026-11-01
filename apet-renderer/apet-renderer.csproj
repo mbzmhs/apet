@@ -6,7 +6,7 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>APet.Renderer</RootNamespace>
     <AssemblyName>APet.Renderer</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Nullable>enable</Nullable>
     <!-- 移植自 spine/live2d/vrm 三库的运行时(Spine/Live2D/Vrm 子目录,~2 万行)为无 nullable 注解的原生代码,
          产生 ~850 条 CS86xx;APet 自有渲染层(根目录 + 合并的 Content/Stage)已规范注解、本无警告。
