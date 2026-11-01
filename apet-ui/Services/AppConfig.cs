@@ -566,8 +566,8 @@ public sealed class TtsWindowsConfig
 public sealed class TtsGsvConfig
 {
     /// <summary>默认声线(名或 名/情绪,如 youxiang 或 youxiang/happy);对话中情绪标签临时切换,
-    /// 一轮回复结束自动回到此默认。声线在下方 Voices 中配置。</summary>
-    public string Voice { get; set; } = "neutral";
+    /// 一轮回复结束自动回到此默认。留空 = 引擎默认(第一个已配置声线)。声线在下方 Voices 中配置。</summary>
+    public string Voice { get; set; } = "";
 
     /// <summary>模型包目录(含 manifest.json)。</summary>
     public string ModelDir { get; set; } = "";
