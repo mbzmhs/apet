@@ -1,0 +1,21 @@
+{
+  "name": "apet-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.15",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.0.13",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

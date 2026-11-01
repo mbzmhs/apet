@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- APet 桌宠渲染层:Spine / Live2D / VRM / 基础图片 四引擎自包含移植(原 spine-lib / live2d-lib / vrm-lib 三库的代码并入本工程,原仓库不再被引用) -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>APet.Renderer</RootNamespace>
+    <AssemblyName>APet.Renderer</AssemblyName>
+    <Version>0.1.0</Version>
+    <Nullable>enable</Nullable>
+    <!-- 移植自 spine/live2d/vrm 三库的运行时(Spine/Live2D/Vrm 子目录,~2 万行)为无 nullable 注解的原生代码,
+         产生 ~850 条 CS86xx;APet 自有渲染层(根目录 + 合并的 Content/Stage)已规范注解、本无警告。
+         整工程屏蔽这些 nullable 警告(仅本工程,不改动任何移植源码,也不影响其余工程的可空检查) -->
+    <NoWarn>$(NoWarn);CS8618;CS8603;CS8625;CS8600;CS8602;CS8601;CS8604;CS8619;CS8605</NoWarn>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="smoke-test" />
+    <!-- 双 UI 框架共存:去掉 WinForms/Drawing 的隐式 using,避免与 WPF 的 Image/Point 等二义(与 apet-ui 同做法) -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <!-- WinForms SDK 会隐式移除 System.IO;本工程大量文件读写需要它 -->
+    <Using Include="System.IO" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTK" Version="4.9.4" />
+    <PackageReference Include="OpenTK.WinForms" Version="4.0.0-pre.8" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Hello · 插件 UI</title>
+<!--
+  APet 插件自定义 UI 示例(单文件,无构建)。
+  · slot=settings(设置页"自定义界面"):自定义设置表单 + 向宿主 DOM 注入一个浮动徽章(演示界面级能力)。
+  · slot=sidebar(侧边栏页签):运行结局统计(数据面)+ 每轮实时刷新(事件)。
+  桥能力经 /apet-bridge.js 注入 window.APetPlugin;主题 token 由宿主自动同步。
+  详见 docs/external-plugin-guide.md「自定义 UI」章。
+-->
+<script src="/apet-bridge.js?plugin=Hello"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; color: var(--fg-primary, #e6e6ea);
+    font-family: var(--font, sans-serif); font-size: 13px; }
+  .wrap { padding: 14px 16px; box-sizing: border-box; height: 100%; overflow: auto; }
+  h3 { margin: 0 0 4px; font-size: 14px; }
+  .hint { color: var(--fg-muted, #6a6a73); font-size: 12px; line-height: 1.6; }
+  label { display: block; margin: 12px 0 4px; color: var(--fg-secondary, #9b9ba4); font-size: 12px; }
+  input[type=text], input[type=number] { width: 100%; box-sizing: border-box; padding: 7px 9px;
+    background: var(--bg-input, #28282e); border: 1px solid var(--border, #33333b);
+    border-radius: var(--radius-panel, 8px); color: var(--fg-primary, #e6e6ea); font-size: 13px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row input[type=range] { flex: 1; }
+  button { margin-top: 14px; padding: 8px 16px; background: var(--accent, #4f7fe0); color: #fff;
+    border: 0; border-radius: var(--radius-panel, 8px); font-size: 13px; cursor: pointer; }
+  button.ghost { background: transparent; border: 1px solid var(--border, #33333b); color: var(--fg-secondary, #9b9ba4); }
+  .stat { display: flex; gap: 10px; margin: 10px 0 4px; }
+  .chip { flex: 1; text-align: center; padding: 12px 0; background: var(--bg-panel, #222227);
+    border: 1px solid var(--border, #33333b); border-radius: var(--radius-panel, 8px); }
+  .chip b { display: block; font-size: 20px; color: var(--fg-accent, #6c9fff); }
+  .chip span { font-size: 11px; color: var(--fg-muted, #6a6a73); }
+  .ok { color: var(--success, #98c379); margin-top: 8px; font-size: 12px; min-height: 14px; }
+  .divider { border: 0; border-top: 1px solid var(--border, #33333b); margin: 18px 0; }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"></div>
+<script>
+  var ap = window.APetPlugin || {};
+  var root = document.getElementById('root');
+
+  // ───────── slot=sidebar:运行结局统计 + 每轮刷新 ─────────
+  function renderSidebar() {
+    root.innerHTML =
+      '<h3>Hello · 运行结局</h3>' +
+      '<div class="hint">数据面 GetPluginData,每轮 OnRunFinishedAsync 后经事件实时刷新。</div>' +
+      '<div class="stat">' +
+        '<div class="chip"><b id="c">–</b><span>成功</span></div>' +
+        '<div class="chip"><b id="k">–</b><span>中断</span></div>' +
+        '<div class="chip"><b id="f">–</b><span>失败</span></div>' +
+      '</div>' +
+      '<div class="hint" id="lang" style="margin-top:10px"></div>';
+    function refresh() {
+      ap.data(ap.sessionId).then(function (d) {
+        if (!d || typeof d !== 'object') return; // 异常响应(空/HTML 片段)不渲染
+        document.getElementById('c').textContent = d.completed;
+        document.getElementById('k').textContent = d.cancelled;
+        document.getElementById('f').textContent = d.failed;
+        document.getElementById('lang').textContent =
+          '宿主配置视图:语言 = ' + (d.language || '(读不到)');
+      }).catch(function () {});
+    }
+    refresh();
+    var es = ap.events(ap.sessionId);
+    es.onmessage = function (ev) {
+      try {
+        var f = JSON.parse(ev.data);
+        if (f.type === 'plugin_data_changed') refresh();
+      } catch (e) {}
+    };
+  }
+
+  // ───────── slot=settings:自定义设置表单 + 宿主 DOM 徽章演示 ─────────
+  function renderSettings() {
+    root.innerHTML =
+      '<h3>Hello · 自定义设置界面</h3>' +
+      '<div class="hint">演示插件自带 Vue/原生 UI 取代通用表单:读 [PluginSetting] 当前值,保存走框架批量校验。</div>' +
+      '<label>问候语 greeting</label><input type="text" id="greeting" />' +
+      '<label>风格 style</label>' +
+      '<div class="row"><input type="text" id="style" list="styles" /><datalist id="styles">' +
+        '<option value="normal"><option value="formal"></datalist></div>' +
+      '<label>音量 volume</label>' +
+      '<div class="row"><input type="range" id="volume" min="0" max="100" /><span id="volnum"></span></div>' +
+      '<button id="save">保存</button>' +
+      '<div class="ok" id="msg"></div>' +
+      '<hr class="divider" />' +
+      '<h3>宿主 DOM(界面级插件)</h3>' +
+      '<div class="hint">向 APet 主窗口注入一个浮动徽章:adoptStyle 注入样式 + track 标记节点;' +
+        '关闭本页面(或禁用插件)时宿主自动回收。注入的节点带 data-APet-plugin="Hello" 属性,可在 devtools 里核对。</div>' +
+      '<div class="row" style="margin-top:10px">' +
+        '<button class="ghost" id="badge">注入/移除徽章</button>' +
+        '<button class="ghost" id="banner">注入顶部横幅</button>' +
+      '</div>';
+
+    ap.settings().then(function (list) {
+      var g = {}, s = {}, v = {};
+      list.forEach(function (x) { g[x.name] = x.currentValue; });
+      var gi = document.getElementById('greeting'); gi.value = g.greeting || '';
+      var si = document.getElementById('style'); si.value = g.style || 'normal';
+      var vi = document.getElementById('volume'); vi.value = g.volume != null ? g.volume : 50;
+      document.getElementById('volnum').textContent = vi.value;
+      vi.addEventListener('input', function () { document.getElementById('volnum').textContent = vi.value; });
+      document.getElementById('save').onclick = function () {
+        ap.saveSettings({ greeting: gi.value, style: si.value, volume: +vi.value }).then(function (r) {
+          document.getElementById('msg').textContent = (r && r.ok === false) ? ('保存失败:' + (r.error || '')) : '已保存 ✓';
+        }).catch(function () { document.getElementById('msg').textContent = '保存失败(网络)'; });
+      };
+    }).catch(function () {});
+
+    var badge = null;
+    document.getElementById('badge').onclick = function () {
+      if (badge) { badge.remove(); ap.untrack(badge); badge = null; return; }
+      ap.adoptStyle('.hello-badge{position:fixed;right:16px;bottom:16px;z-index:99999;padding:8px 14px;' +
+        'border-radius:10px;background:var(--accent,#4f7fe0);color:#fff;font-size:13px;' +
+        'box-shadow:0 4px 16px rgba(0,0,0,.35);font-family:var(--font,sans-serif)}');
+      badge = document.createElement('div');
+      badge.className = 'hello-badge';
+      badge.textContent = '👋 来自 Hello 插件 UI';
+      ap.track(badge);
+      (ap.anchor('app-root') || ap.document.body).appendChild(badge);
+    };
+
+    var banner = null;
+    document.getElementById('banner').onclick = function () {
+      if (banner) { banner.remove(); ap.untrack(banner); banner = null; return; }
+      ap.adoptStyle('.hello-banner{position:fixed;top:0;left:0;right:0;z-index:99999;padding:6px 16px;' +
+        'text-align:center;background:var(--accent-sub-bg,rgba(77,208,225,.09));' +
+        'border-bottom:1px solid var(--accent-sub,#4dd0e1);color:var(--accent-sub,#4dd0e1);' +
+        'font-size:12px;font-family:var(--font,sans-serif)}');
+      banner = document.createElement('div');
+      banner.className = 'hello-banner';
+      banner.textContent = '这是一条由插件 UI 注入到宿主顶部的横幅(锚点:app-root)。';
+      ap.track(banner);
+      var hostRoot = ap.anchor('app-root') || ap.document.body;
+      hostRoot.insertBefore(banner, hostRoot.firstChild);
+    };
+  }
+
+  if (ap.slot === 'sidebar') renderSidebar();
+  else renderSettings();
+</script>
+</body>
+</html>

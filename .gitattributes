@@ -1,0 +1,5 @@
+# 换行符统一归一化:仓库内一律 LF,提交时自动转换,忽略本地 CRLF/LF 差异
+* text=auto eol=lf
+# Windows 批处理必须 CRLF + 纯 ASCII(cmd.exe 不认 UTF-8 中文与 LF 行尾,双击/解析会炸)
+*.cmd text eol=crlf
+*.bat text eol=crlf

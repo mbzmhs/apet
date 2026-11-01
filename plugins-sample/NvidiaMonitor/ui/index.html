@@ -1,0 +1,107 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GPU · 插件 UI</title>
+<!--
+  APet 插件自定义 UI 示例(单文件,无构建)。仿 vscode-nvidia-monitor:
+  · slot=sidebar(侧边栏页签):全量实时面板(利用率条/显存/温度/功耗/风扇)。
+  · 底部状态栏:数据面返回的 status 短串由宿主渲染在 agent 底部状态栏右侧(无需 DOM 注入)。
+  · slot=settings(设置页):轮询间隔表单。
+  桥能力经 /apet-bridge.js 注入 window.APetPlugin;主题 token 由宿主自动同步。
+  详见 docs/external-plugin-guide.md「自定义 UI」章。
+-->
+<script src="/apet-bridge.js?plugin=GpuMonitor"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; color: var(--fg-primary, #e6e6ea);
+    font-family: var(--font, sans-serif); font-size: 13px; }
+  .wrap { padding: 14px 16px; box-sizing: border-box; height: 100%; overflow: auto; }
+  h3 { margin: 0 0 4px; font-size: 14px; }
+  .hint { color: var(--fg-muted, #6a6a73); font-size: 12px; line-height: 1.6; }
+  .gpu { border: 1px solid var(--border, #33333b); border-radius: 10px; padding: 10px 12px; margin-top: 10px; }
+  .gpu .name { font-size: 12px; color: var(--fg-secondary, #9b9b9f); }
+  .bar { height: 6px; border-radius: 3px; background: var(--bg-input, #28282e); margin: 8px 0; overflow: hidden; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--fg-accent, #6c9fff); border-radius: 3px; transition: width .5s; }
+  .kv { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--fg-secondary, #9b9b9f); }
+  .kv b { color: var(--fg-primary, #e6e6ea); font-weight: 600; }
+  .err { color: var(--danger, #e06c75); margin-top: 8px; font-size: 12px; line-height: 1.6; }
+  label { display: block; margin-top: 12px; color: var(--fg-secondary, #9b9b9f); font-size: 12px; }
+  input[type=number] { margin-top: 4px; width: 100%; box-sizing: border-box; padding: 7px 10px;
+    background: var(--bg-input, #28282e); color: var(--fg-primary, #e6e6ea);
+    border: 1px solid var(--border, #33333b); border-radius: 8px; font-size: 13px; }
+  button { margin-top: 14px; padding: 8px 16px; background: var(--accent, #4f7fe0); color: #fff;
+    border: 0; border-radius: 8px; font-size: 13px; cursor: pointer; }
+  .ok { margin-top: 8px; font-size: 12px; color: var(--fg-muted, #6a6a73); }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"></div>
+<script>
+  var ap = window.APetPlugin || {};
+  var root = document.getElementById('root');
+
+  // ───────── 数据面轮询:插件侧 Timer 已在按 interval 查 nvidia-smi,这里只读最近快照 ─────────
+  function loop() {
+    ap.data().then(tick).catch(function () {});
+    setTimeout(loop, 1500);
+  }
+
+  function gb(mb) { return (mb / 1024).toFixed(1); }
+
+
+  // ───────── slot=sidebar:全量实时面板 ─────────
+  function card(g) {
+    var util = g.utilization != null ? g.utilization : 0;
+    return '<div class="gpu">' +
+      '<div class="name">' + g.name + '</div>' +
+      '<div class="bar"><i style="width:' + util + '%"></i></div>' +
+      '<div class="kv">' +
+        '<span>利用率 <b>' + (g.utilization != null ? g.utilization + '%' : '–') + '</b></span>' +
+        '<span>显存 <b>' + gb(g.memUsedMb || 0) + '/' + gb(g.memTotalMb || 0) + ' GB</b></span>' +
+        '<span>温度 <b>' + (g.temperatureC != null ? g.temperatureC + '°C' : '–') + '</b></span>' +
+        '<span>功耗 <b>' + (g.powerW != null ? g.powerW.toFixed(1) + ' W' : '–') + '</b></span>' +
+        (g.fanSpeedPct != null ? '<span>风扇 <b>' + g.fanSpeedPct + '%</b></span>' : '') +
+      '</div></div>';
+  }
+
+  function renderSidebar(d) {
+    root.innerHTML =
+      '<h3>GPU 实时</h3>' +
+      '<div class="hint">每 ' + (d.interval || '?') + ' 秒查询 nvidia-smi;底部状态栏同步显示简化实时信息(数据面 status 字段)。</div>' +
+      ((d.available && d.gpus && d.gpus.length)
+        ? d.gpus.map(card).join('')
+        : '<div class="err">' + (d.error || '采集中…') + '</div>');
+  }
+
+  // ───────── slot=settings:轮询间隔表单 ─────────
+  function renderSettings() {
+    root.innerHTML =
+      '<h3>GPU 监控 · 设置</h3>' +
+      '<div class="hint">nvidia-smi 轮询间隔(秒)。保存后立即生效(下一轮查询按新间隔重新武装)。</div>' +
+      '<label>轮询间隔(秒)</label><input type="number" id="interval" min="1" max="60" />' +
+      '<button id="save">保存</button><div class="ok" id="msg"></div>';
+    ap.settings().then(function (list) {
+      var it = list.find(function (s) { return s.name === 'interval'; });
+      if (it) document.getElementById('interval').value = it.currentValue;
+    }).catch(function () {});
+    document.getElementById('save').onclick = function () {
+      ap.saveSettings({ interval: parseInt(document.getElementById('interval').value, 10) || 2 })
+        .then(function (r) {
+          document.getElementById('msg').textContent =
+            r && r.ok === false ? '保存失败:' + (r.error || '') : '已保存 ✓';
+        })
+        .catch(function () { document.getElementById('msg').textContent = '保存失败(网络)'; });
+    };
+  }
+
+  function tick(d) {
+    if (!d || typeof d !== 'object') return; // 异常响应(空/HTML 片段)不渲染
+    renderSidebar(d);
+  }
+
+  if (ap.slot === 'sidebar') loop();
+  else renderSettings();
+</script>
+</body>
+</html>

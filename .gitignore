@@ -1,0 +1,97 @@
+# 本地冒烟测试(不入库)
+smoke-test/
+
+# GSV 本地推理引擎原生 DLL(体积大/含 GPU provider,不入库;本地保留于 apet-ui/native/gsv/)
+apet-ui/native/gsv/*.dll
+
+# GSV 模型包与参考音频(体积大,部署时从 GitHub Release 自动下载底座包;不入库)
+/models/
+/refs/
+
+# 构建产物
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+publish/
+/dist/
+!**/[Pp]ublish Profiles/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# Rider 专属
+*.sln.iml
+
+# 测试与覆盖率
+[Tt]est[Rr]esult*/
+coverage*/
+*.coverage
+*.coveragexml
+TestResults/
+
+# NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuspec.bak
+project.lock.json
+.Packages/
+packages/
+
+# .NET 构建中间文件
+*.binlog
+*.log
+msbuild.log
+*.dsp
+*.plg
+*.opt
+*.vbw
+*.pidb
+*.svclog
+*.scc
+
+# 用户私密/本地配置
+appsettings.*.local.json
+*.secrets.json
+.env
+.env.*
+/asset
+
+# 操作系统杂项
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# ReSharper / DotCover / CodeRush
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+*.dotCover
+
+# 临时文件
+*.tmp
+*.bak
+*.cache
+~$*
+
+# Web 前端(v2):依赖与构建产物不入库(deploy.cmd 部署时自动构建)
+web/node_modules/
+web/dist/
+
+# ZCode 工作区状态(计划/会话等,不入库)
+.zcode/
+.zcodeignore

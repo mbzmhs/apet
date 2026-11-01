@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    外部插件示例(不入 apet.slnx,单独构建):
+      dotnet build plugins-sample/NvidiaMonitor
+    然后把 bin/Debug/net8.0/NvidiaMonitor.dll 复制到部署目录 plugins\ 文件夹,重启 APet 即生效。
+    仿 vscode-nvidia-monitor:nvidia-smi 轮询,侧边栏全量面板 + 底部状态栏短文本。
+    详见 docs/external-plugin-guide.md。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>NvidiaMonitor</RootNamespace>
+    <AssemblyName>NvidiaMonitor</AssemblyName>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <!-- 自定义 UI 资产:ui 目录整体内嵌为资源(如 NvidiaMonitor.ui.index.html),宿主经 ui/* 端点伺服给同源 iframe -->
+  <ItemGroup>
+    <EmbeddedResource Include="ui\**\*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\apet-framework\apet-framework.csproj" />
+  </ItemGroup>
+
+</Project>

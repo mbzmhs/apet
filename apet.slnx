@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="apet-framework/apet-framework.csproj" />
+  <Project Path="apet-renderer/apet-renderer.csproj" />
+  <Project Path="apet-plugins/apet-plugins.csproj" />
+  <Project Path="apet-psparser/apet-psparser.csproj" />
+  <Project Path="apet-ui/apet-ui.csproj" />
+</Solution>

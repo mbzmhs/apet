@@ -1,0 +1,43 @@
+/* Material Symbols Outlined(本地子集字体,见 tools/subset-material-symbols.py):
+   全局图标体系 —— <span class="ms">icon_name</span>,名字即连字;
+   .fill 实心(如已置顶的图钉),.spin 旋转(运行中齿轮)。 */
+
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url('../assets/fonts/MaterialSymbolsOutlined-Subset.woff2') format('woff2');
+}
+
+.ms {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  letter-spacing: normal;
+  text-transform: none;
+  font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+  user-select: none;
+  vertical-align: middle;
+}
+
+.ms.fill {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+
+.ms.spin {
+  animation: ms-spin 1.2s linear infinite;
+}
+
+@keyframes ms-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>APet.PsParser</RootNamespace>
+    <AssemblyName>APet.PsParser</AssemblyName>
+    <Version>0.1.0</Version>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\apet-framework\apet-framework.csproj" />
+  </ItemGroup>
+
+  <!--
+    PowerShell 命令的 AST 解析在运行时反射加载本机 PowerShell 的 System.Management.Automation
+    (优先 pwsh 7,其次系统自带 Windows PowerShell 5.1),不引用 NuGet 包:
+    PowerShell SDK 包自带的 S.M.A. 是 .NET Framework 版(类型集是 PS 5.1 子集),
+    且其 RID 专用程序集在 WPF 工程的标记编译临时工程里解析不到,直接引用会编译失败。
+  -->
+
+</Project>

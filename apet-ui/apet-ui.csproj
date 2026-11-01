@@ -1,0 +1,72 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <ItemGroup>
+    <ProjectReference Include="..\apet-framework\apet-framework.csproj" />
+    <ProjectReference Include="..\apet-plugins\apet-plugins.csproj" />
+    <ProjectReference Include="..\apet-renderer\apet-renderer.csproj" />
+    <ProjectReference Include="..\apet-psparser\apet-psparser.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- v2 Web 主窗:内进程 Kestrel(本地 REST/SSE 服务)与 WebView2(客户端内嵌浏览器) -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Web 前端构建产物(deploy.cmd 先跑 web 的 npm build)→ 输出 wwwroot,随宿主部署目录;
+         dist 不存在时(如未构建前端)此通配为空,不影响编译 -->
+    <None Include="..\web\dist\**\*" CopyToOutputDirectory="PreserveNewest"
+          Link="wwwroot\%(RecursiveDir)%(Filename)%(Extension)" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Markdig" Version="1.3.2" />
+    <PackageReference Include="SkiaSharp" Version="4.151.1" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <!-- 会话持久化:SQLite 行级增量写(替代整文件全量重写);被压缩删除的消息留档不删 -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- UseWindowsForms 会隐式引入 System.Windows.Forms/System.Drawing 全局 using,与 WPF 的
+         MessageBox/Application/Clipboard 等类型冲突;移除后仅在 AgentManager 内用别名显式引用。 -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>APet.UI</RootNamespace>
+    <AssemblyName>APet.UI</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- 系统托盘 NotifyIcon(与 WPF 共存) -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- 程序图标(exe 文件/资源管理器/任务栏) -->
+    <ApplicationIcon>ds.ico</ApplicationIcon>
+    <Version>0.1.0</Version>
+    <!-- 目标平台:不指定时 NuGet 会把 SkiaSharp/SQLite 等包的全平台原生库(22 个 RID,约 330MB)
+         都拷进输出 runtimes\;锁定 win-x64 后只保留本平台原生库 -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 嵌入图标资源:各窗口 Icon 与托盘 NotifyIcon 通过 pack URI 加载 -->
+    <Resource Include="ds.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- GSV 本地推理引擎原生 DLL:随构建拷到输出目录(应用目录 = P/Invoke 默认搜索首位,
+         依赖 onnxruntime.dll / providers_shared 同目录一并解析);CUDA provider 不随包,需 GPU 时手动补 -->
+    <None Include="native\gsv\*.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

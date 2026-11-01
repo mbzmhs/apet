@@ -1,0 +1,153 @@
+/* 侧栏会话列表行(全局):ChatView 的置顶行与 SidebarTree 递归行共用。
+ * 从 ChatView 的 scoped 样式抽出,供递归组件复用(组件自身样式拿不到父组件 scoped 规则)。 */
+
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box; /* 同 .arch-item:content-box 下 padding 会把行撑出容器,侧栏列表一直拖着一条横滚条 */
+  width: calc(100% - 12px);
+  margin: 2px 6px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-primary);
+  text-align: left;
+  cursor: pointer;
+  font-size: 14.3px;
+  font-family: var(--font);
+}
+
+.session-item:hover,
+.session-item.sel {
+  background: var(--selection);
+}
+
+.s-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-time {
+  flex: none;
+  font-size: 12.1px;
+  color: var(--fg-muted);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  flex: none;
+}
+
+.dot.work {
+  background: var(--success);
+}
+
+.dot.compress {
+  background: var(--warning);
+}
+
+.dot.err {
+  background: var(--danger);
+}
+
+.dot.unread {
+  background: var(--fg-accent);
+}
+
+/* ───────── 文件夹行与拖拽态(树形会话列表) ───────── */
+
+/* 文件夹行的展开箭头:收起态 chevron_right(›),展开态 expand_more(∨)。
+ * 框宽固定 1em 并双向居中(Material Symbols 官方写法):字形恒在框正中心,
+ * 子块竖线的 --line-x 据此按"框宽一半"精确对准箭头中心 */
+.list-row .chevron {
+  flex: none;
+  width: 1em;
+  font-size: 17px;
+  color: var(--fg-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 文件夹图标(未展开 folder / 展开 folder_open),默认中性灰(避免与"蓝色"预设撞色);有预设色时由内联色覆盖 */
+.list-row .folder-ico {
+  flex: none;
+  font-size: 16px;
+  color: var(--fg-secondary);
+  display: inline-flex;
+  align-items: center;
+}
+
+.list-row .folder-title {
+  font-weight: 600;
+}
+
+/* 行尾计数(含子文件夹递归) */
+.list-row .folder-count {
+  opacity: 0.7;
+}
+
+/* 拖拽中的行:半透明"离开原位"感 */
+.list-row.dragging {
+  opacity: 0.35;
+}
+
+/* 落点指示:前/后 = 行上下缘一根细线;移入/嵌套 = 整行高亮 */
+.list-row.drop-before {
+  box-shadow: 0 -2px 0 0 var(--fg-accent);
+}
+
+.list-row.drop-after {
+  box-shadow: 0 2px 0 0 var(--fg-accent);
+}
+
+.list-row.drop-into {
+  background: var(--selection);
+  outline: 1px solid var(--fg-accent);
+}
+
+/* 文件夹范围竖线 = 子块容器沿左缘为整棵子树画一条线(.kids::before):只在展开后出现,
+ * 位置落在文件夹行下方、整个子块内部;收起时子块高度归零,线随之消失。
+ * 容器物理上包住整个子树,每层祖先夹都在自己的子块上续线,自然贯通到最深层,
+ * 子文件夹里的会话行不会再断线。
+ * --line-x = 对准该夹行展开箭头的正中心(行左缘 + padding + 箭头半宽,组件按层级内联);
+ * 颜色 = 该夹预设色(内联 --own-line-color),未设色走默认灰(同图标,--border 太暗看不见) */
+.kids {
+  position: relative;
+}
+
+.kids::before {
+  content: '';
+  position: absolute;
+  left: var(--line-x, 24px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--own-line-color, var(--fg-secondary));
+  pointer-events: none;
+}
+
+/* 文件夹子块展开/收起:grid-template-rows 0fr→1fr 原生过渡(Chromium 107+ 可动画)。
+ * 整块作为一个元素同节奏长开/缩回,无逐行 JS 时序,展开与收起完全对称且平滑。 */
+.kids {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.22s ease;
+}
+
+.kids.open {
+  grid-template-rows: 1fr;
+}
+
+.kids-in {
+  overflow: hidden;
+  min-height: 0;
+}

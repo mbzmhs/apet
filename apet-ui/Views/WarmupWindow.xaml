@@ -1,0 +1,18 @@
+<Window x:Class="APet.UI.Views.WarmupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="GSV 参考音频预热" Width="460" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        WindowStyle="None" ShowInTaskbar="False"
+        Background="{StaticResource BgPanel}" BorderBrush="{StaticResource BorderBrush}"
+        BorderThickness="1">
+    <StackPanel Margin="18,16">
+        <TextBlock x:Name="TitleLabel" Text="正在预热…" FontSize="13" FontWeight="SemiBold"
+                   Foreground="{StaticResource FgPrimary}"/>
+        <ProgressBar x:Name="Bar" Height="14" Minimum="0" Margin="0,12,0,0"
+                     Background="{StaticResource BgInput}" BorderBrush="{StaticResource BorderBrush}"
+                     Foreground="{StaticResource AccentBrush}"/>
+        <TextBlock x:Name="SubLabel" Margin="0,10,0,0" FontSize="11"
+                   Foreground="{StaticResource FgSecondary}" TextTrimming="CharacterEllipsis"/>
+    </StackPanel>
+</Window>

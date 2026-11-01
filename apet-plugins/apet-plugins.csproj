@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="smoke-test" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 内置技能(随插件程序集发布,不占用户目录):Skills/Builtin/<技能名>.md -->
+    <EmbeddedResource Include="Skills\Builtin\*.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\apet-framework\apet-framework.csproj" />
+<ProjectReference Include="..\apet-renderer\apet-renderer.csproj" />
+
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 记忆插件:SQLite 存储(自动捆绑原生 sqlite 库) -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <!-- Windows 系统语音(SAPI):TTS windows 引擎 -->
+    <PackageReference Include="System.Speech" Version="8.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>APet.Plugins</RootNamespace>
+    <AssemblyName>APet.Plugins</AssemblyName>
+    <Version>0.1.0</Version>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,317 @@
+/* ───────── 主题设计令牌:暗色值复刻 apet-ui/Themes/Dark.xaml 的画刷 ─────────
+   亮色在 M4 以 [data-theme="light"] 覆盖;切换由前端写 documentElement.dataset.theme。 */
+
+:root {
+  --bg-base: #1b1b1f;
+  --bg-panel: #222227;
+  --bg-panel-translucent: rgba(34, 34, 39, 0.8);
+  --bg-panel-hover: #2b2b31;
+  --bg-bubble-assistant: #2c2c33;
+  --bg-bubble-user: #2e4e78;
+  --bg-input: #28282e;
+  --fg-primary: #e6e6ea;
+  --fg-secondary: #9b9ba4;
+  --fg-dim: #7d7d87; /* 思考/工具名等执行步骤标签专用:比 secondary 暗一档,不波及其他 UI */
+  --fg-muted: #6a6a73;
+  --fg-accent: #6c9fff;
+  --border: #33333b;
+  --selection: #3a3a44;
+  --accent: #4f7fe0;
+  --accent-sub: #4dd0e1;
+  --accent-sub-bg: rgba(77, 208, 225, 0.09);
+  --danger: #e06c75;
+  --danger-bg: rgba(224, 108, 117, 0.09);
+  --danger-border: rgba(224, 108, 117, 0.38);
+  --success: #98c379;
+  --warning: #e5c07b;
+  --bg-code: #34343d;
+  --bg-tool: #26262c;
+  /* diff 卡片:低饱和底色(仿例图的暗橄榄绿/暗红)+ 行号槽更深一档 + 代码正文色 */
+  --diff-add-bg: rgba(122, 160, 102, 0.13);
+  --diff-del-bg: rgba(201, 100, 106, 0.12);
+  --diff-add-sgn: #84b06e;
+  --diff-del-sgn: #cf727c;
+  --diff-add-gutter: #2d312f;
+  --diff-del-gutter: #35292f;
+  --code-fg: #c9ccd4;
+  --gutter-bg: #212127;
+  --font: 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  --radius-panel: 8px;
+  --radius-bubble: 10px;
+}
+
+[data-theme='light'] {
+  /* 亮色令牌:与暗色同一令牌结构,按对比度需求重新映射 */
+  --bg-base: #f2f2f5;
+  --bg-panel: #ffffff;
+  --bg-panel-translucent: rgba(255, 255, 255, 0.82);
+  --bg-panel-hover: #ececf1;
+  --bg-bubble-assistant: #ececf1;
+  --bg-bubble-user: #d3e2f7;
+  --bg-input: #ffffff;
+  --fg-primary: #212126;
+  --fg-secondary: #63636d;
+  --fg-dim: #7b7b85; /* 亮色下介于 secondary 与 muted 之间(同暗色语义:步骤标签弱一档) */
+  --fg-muted: #98989f;
+  --fg-accent: #2f62c4;
+  --border: #d9d9e0;
+  --selection: #e5e7f0;
+  --accent: #4f7fe0;
+  --accent-sub: #0e93a8;
+  --accent-sub-bg: rgba(14, 147, 168, 0.08);
+  --danger: #cf4453;
+  --danger-bg: rgba(207, 68, 83, 0.07);
+  --danger-border: rgba(207, 68, 83, 0.32);
+  --success: #3d8a46;
+  --warning: #9c7a1f;
+  --bg-code: #e9eaef;
+  --bg-tool: #eef0f4;
+  --diff-add-bg: rgba(61, 138, 70, 0.10);
+  --diff-del-bg: rgba(207, 68, 83, 0.09);
+  --diff-add-sgn: #3d8a46;
+  --diff-del-sgn: #cf4453;
+  --diff-add-gutter: #d6dfde;
+  --diff-del-gutter: #e5dae1;
+  --code-fg: #33333a;
+  --gutter-bg: #e7e9ef;
+}
+
+/* ───────── 亮色下覆盖暗色主题里硬编码的控件色 ───────── */
+
+[data-theme='light'] input[type='checkbox'] {
+  background: #c6c6d0;
+}
+
+[data-theme='light'] input[type='checkbox']::after {
+  background: #ffffff;
+}
+
+[data-theme='light'] .ghost:hover {
+  background: #e6e6ec;
+  border-color: var(--fg-accent);
+}
+
+[data-theme='light'] .ghost:active {
+  background: #dbdbe2;
+}
+
+[data-theme='light'] .asel-pop {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+/* ───────── 滚动条:复刻 Dark.xaml ScrollBar(8px 透明轨道,#4A4A55 圆角滑块) ─────────
+   原生滚动条各浏览器/系统差异大,统一成 WPF 观感 */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #4a4a55 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #4a4a55;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5a5a66;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 亮色滚动条滑块(暗色 #4A4A55 已在默认定义) */
+[data-theme='light'] * {
+  scrollbar-color: #c3c3cd transparent;
+}
+
+[data-theme='light'] ::-webkit-scrollbar-thumb {
+  background: #c3c3cd;
+}
+
+[data-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: #b2b2bd;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--fg-primary);
+  font-family: var(--font);
+  font-size: 14.3px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  height: 100%;
+}
+
+button {
+  font-family: var(--font);
+}
+
+/* ───────── 按钮:复刻 Dark.xaml Button(BgPanelHover 底 圆角6;
+   悬停 #35353D + Accent 描边;按下 #3F3F49;禁用 0.45) ───────── */
+
+.ghost {
+  background: var(--bg-panel-hover);
+  border: 1px solid var(--border);
+  color: var(--fg-primary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13.2px;
+  font-family: var(--font);
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.ghost:hover {
+  background: #35353d;
+  border-color: var(--fg-accent);
+}
+
+.ghost:active {
+  background: #3f3f49;
+}
+
+.ghost:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ghost.danger {
+  color: var(--danger);
+}
+
+/* ───────── 胶囊开关(全站 checkbox;规格 1:1 复刻 Themes/Dark.xaml 的 ToggleSwitch) ─────────
+   轨道 42×22 圆角 11,未选中底色 #4A4A55;滑块 16×16 未选中 #B9B9C2 距左 3,
+   选中轨道变 Accent、滑块变白距左 23;悬停轨道 0.9;禁用整体 0.45。 */
+
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 42px !important;
+  height: 22px !important;
+  box-sizing: border-box;
+  border-radius: 11px;
+  background: #4a4a55;
+  border: none;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  flex: none;
+  margin: 0;
+  vertical-align: middle;
+}
+
+input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #b9b9c2;
+  transition: left 0.15s, background 0.15s;
+}
+
+input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+input[type='checkbox']:checked::after {
+  left: 23px;
+  background: #fff;
+}
+
+input[type='checkbox']:hover {
+  opacity: 0.9;
+}
+
+input[type='checkbox']:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ───────── 焦点态:去掉浏览器默认焦点框(WebView2 按系统主题色,常为突兀的黄色) ───────── */
+
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible {
+  outline: none;
+}
+
+.ctl:focus,
+.ctl:focus-visible,
+.input:focus,
+.input:focus-visible {
+  border-color: var(--accent);
+}
+
+/* ───────── 滑条:1:1 复刻 WPF Slider(4px 轨道,左填充 Accent,圆形描边滑块) ─────────
+   --fill 由全局 input 监听按当前值百分比写入,驱动左填充渐变 */
+
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--fill, 50%),
+    var(--border) var(--fill, 50%)
+  );
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-panel-hover);
+  border: 2px solid var(--accent);
+  transition: background 0.15s;
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+  background: var(--accent);
+}
+
+input[type='range']:active::-webkit-slider-thumb {
+  background: var(--accent);
+}
