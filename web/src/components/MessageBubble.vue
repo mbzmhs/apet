@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import { getMessageSummary, imageUrl } from '../api/client'
 import { highlightLine } from '../lib/highlight'
 import { renderMarkdown } from '../lib/markdown'
@@ -11,6 +11,8 @@ const emit = defineEmits<{
   auth: [step: any, allow: boolean, trust: boolean]
   /** sub_* 工具行点击:打开关联子代理运行的模态框(只读回看) */
   'open-sub-run': [runId: number]
+  /** 思考卡展开:展开会瞬时增高 ~280px,列表贴底时需强制跟随(见 ChatView.onThinkingExpand) */
+  'expand-thinking': []
 }>()
 
 const role = computed(() => props.message.role)
@@ -190,45 +192,380 @@ function toggleRow(i: number) {
   const s = openRows.value
   s.has(i) ? s.delete(i) : s.add(i)
   openRows.value = new Set(s)
+  if (s.has(i)) {
+    // 重新展开一律回到"跟随最新":清掉上一轮的钉底记忆(块链保留,增量续上即可)
+    bodyPinned.delete(i)
+  }
+  void syncThinkingBodies()
+}
+
+const EXPAND_DUR = 320 // 卡体展开高度动画时长:与列表平滑滚动(ChatView.animateListToBottom)同拍同 easing
+const EXPAND_EASE = 'cubic-bezier(0.33, 1, 0.68, 1)' // 与列表滚动动画共用同一条缓动曲线
+
+/** 展开面板动画:summary click 的微任务里原生翻转已完成(面板已全高)。
+ *  面板 = 完整可视卡(文件卡为 .filecard 容器,含标题栏;其余为体本身)——只动画体会把
+ *  文件卡标题栏排除在外(实测:标题栏瞬现)。元素是默认 content-box:视觉总高 =
+ *  height + 上下 padding + margin + 上下 border——六项一起从全 0 过渡到自然值,起止的
+ *  视觉总高才是真的 0/自然(只动 height 压不掉 padding/border,残留会瞬跳 = 一帧卡顿)。
+ *  期间 overflow hidden 裁剪内容;结束清除内联样式回到 max-height/内容自适应 */
+function animateBodyOpen(el: HTMLElement) {
+  const cs = getComputedStyle(el)
+  const h = parseFloat(cs.height)
+  const pt = cs.paddingTop, pb = cs.paddingBottom, mt = cs.marginTop
+  const bt = cs.borderTopWidth, bb = cs.borderBottomWidth
+  if (!(h > 0) && parseFloat(pt) <= 0 && parseFloat(pb) <= 0) return
+  el.style.overflow = 'hidden'
+  el.style.height = '0px'
+  el.style.paddingTop = '0px'
+  el.style.paddingBottom = '0px'
+  el.style.marginTop = '0px'
+  el.style.borderTopWidth = '0px'
+  el.style.borderBottomWidth = '0px'
+  el.getBoundingClientRect() // 强制回流:确保过渡从全 0 起步
+  const dur = `${EXPAND_DUR}ms ${EXPAND_EASE}`
+  el.style.transition = `height ${dur}, padding-top ${dur}, padding-bottom ${dur}, margin-top ${dur}, border-top-width ${dur}, border-bottom-width ${dur}`
+  el.style.height = `${h}px`
+  el.style.paddingTop = pt
+  el.style.paddingBottom = pb
+  el.style.marginTop = mt
+  el.style.borderTopWidth = bt
+  el.style.borderBottomWidth = bb
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    el.style.height = ''
+    el.style.paddingTop = ''
+    el.style.paddingBottom = ''
+    el.style.marginTop = ''
+    el.style.borderTopWidth = ''
+    el.style.borderBottomWidth = ''
+    el.style.overflow = ''
+    el.style.transition = ''
+  }
+  el.addEventListener('transitionend', finish, { once: true })
+  setTimeout(finish, EXPAND_DUR + 80) // 兜底:过渡被中断未触发 transitionend 时也能清除
+}
+
+const collapsing = new Set<number>() // 收起动画进行中的步骤(期间再点 = 取消收起重新展开)
+
+/** 收起面板动画:height + 上下 padding + margin-top + 上下 border-width 一起过渡到全 0
+ *  (视觉总高真的归零),结束后 done() 真正收起——details 隐藏零跳变 */
+function animateBodyCollapse(el: HTMLElement, done: () => void) {
+  const cs = getComputedStyle(el)
+  const h = parseFloat(cs.height)
+  const pt = cs.paddingTop, pb = cs.paddingBottom, mt = cs.marginTop
+  const bt = cs.borderTopWidth, bb = cs.borderBottomWidth
+  if (!(h > 0) && parseFloat(pt) <= 0 && parseFloat(pb) <= 0 && parseFloat(mt) <= 0) { done(); return }
+  el.style.overflow = 'hidden'
+  el.style.height = `${h}px`
+  el.style.paddingTop = pt
+  el.style.paddingBottom = pb
+  el.style.marginTop = mt
+  el.style.borderTopWidth = bt
+  el.style.borderBottomWidth = bb
+  el.getBoundingClientRect() // 强制回流:从当前视觉高起步
+  const dur = `${EXPAND_DUR}ms ${EXPAND_EASE}`
+  el.style.transition = `height ${dur}, padding-top ${dur}, padding-bottom ${dur}, margin-top ${dur}, border-top-width ${dur}, border-bottom-width ${dur}`
+  el.style.height = '0px'
+  el.style.paddingTop = '0px'
+  el.style.paddingBottom = '0px'
+  el.style.marginTop = '0px'
+  el.style.borderTopWidth = '0px'
+  el.style.borderBottomWidth = '0px'
+  let finished = false
+  const finish = () => {
+    if (finished) return
+    finished = true
+    el.style.height = ''
+    el.style.paddingTop = ''
+    el.style.paddingBottom = ''
+    el.style.marginTop = ''
+    el.style.borderTopWidth = ''
+    el.style.borderBottomWidth = ''
+    el.style.overflow = ''
+    el.style.transition = ''
+    done()
+  }
+  el.addEventListener('transitionend', finish, { once: true })
+  setTimeout(finish, EXPAND_DUR + 80) // 兜底:过渡被中断未触发 transitionend 时也能收尾
+}
+
+/** 动画面板 = 注册体向上找到的整个可视卡(文件卡为 .filecard,含标题栏;其余为体本身) */
+function expandPanelOf(i: number): HTMLElement | null {
+  const el = bodyEls.get(i)
+  if (!el) return null
+  return (el.closest('.filecard') as HTMLElement) || el
+}
+
+function clearPanelAnim(panel: HTMLElement) {
+  panel.style.height = ''
+  panel.style.paddingTop = ''
+  panel.style.paddingBottom = ''
+  panel.style.marginTop = ''
+  panel.style.borderTopWidth = ''
+  panel.style.borderBottomWidth = ''
+  panel.style.overflow = ''
+  panel.style.transition = ''
+}
+
+/** summary click 发生在原生 details 翻转【之前】——此刻列表贴底状态真实。
+ *  展开:面板 0→自然高动画(所有卡,含文件卡标题栏)+ 思考卡通知列表平滑跟随(同步时长);
+ *  收起:拦下原生瞬藏(preventDefault),面板收到 0 后再真正收起;动画中再点 = 取消收起 */
+function onSegSummaryClick(i: number, isThinkingCard: boolean, e: MouseEvent) {
+  if (collapsing.has(i)) {
+    collapsing.delete(i)
+    const panel = expandPanelOf(i)
+    if (panel) clearPanelAnim(panel) // 立即恢复全高,保持展开
+    return
+  }
+  if (isOpen(i)) {
+    const panel = expandPanelOf(i)
+    if (!panel) { toggleRow(i); return }
+    collapsing.add(i)
+    e.preventDefault() // 拦下原生瞬藏,先播收起动画
+    animateBodyCollapse(panel, () => {
+      collapsing.delete(i)
+      toggleRow(i)
+    })
+    return
+  }
+  const panel = expandPanelOf(i)
+  if (panel) void Promise.resolve().then(() => animateBodyOpen(panel))
+  if (isThinkingCard) emit('expand-thinking')
+}
+
+function onToolSummaryClick(i: number, s: any, e: MouseEvent) {
+  if (!canExpand(s)) { e.preventDefault(); return } // 不可展开:维持原行为
+  onSegSummaryClick(i, false, e)
 }
 
 function isOpen(i: number) {
   return openRows.value.has(i)
 }
 
-/** 折叠头部预览 = 最新一行思考内容(超长取尾部 200 字符,同桌面端 ThinkingSegmentViewModel.Preview) */
+/** 折叠头部预览 = 最新一行思考内容(超长取尾部 200 字符,同桌面端 ThinkingSegmentViewModel.Preview)。
+ *  只扫尾部 O(200):此前对全文跑正则+lastIndexOf 是 O(n),10 万 token 流式下每帧几十万次扫描 */
 function preview(s: Extract<Step, { kind: 'thinking' }>) {
-  const trimmed = (s.text || '').replace(/[\r\n]+$/, '')
-  if (!trimmed) return ''
-  const nl = Math.max(trimmed.lastIndexOf('\n'), trimmed.lastIndexOf('\r'))
-  const line = (nl < 0 ? trimmed : trimmed.slice(nl + 1)).trim()
+  const t = s.text || ''
+  let end = t.length
+  while (end > 0 && (t.charCodeAt(end - 1) === 10 || t.charCodeAt(end - 1) === 13)) end-- // 尾部换行
+  if (!end) return ''
+  const lo = Math.max(0, end - 201)
+  let start = end
+  while (start > lo && t.charCodeAt(start - 1) !== 10 && t.charCodeAt(start - 1) !== 13) start--
+  const line = (start > lo ? t.slice(start, end) : t.slice(end - 200, end)).trim()
   return line.length > 200 ? line.slice(-200) : line
 }
 
-// 思考正文跟随:打开时内容增长自动滚到最新;用户上滚即暂停跟随(ChainingScrollViewer 语义)
+// 摘要行:viewport(overflow-hidden)套内层文本 span,
+// ResizeObserver 盯两者——内容一长就把 scrollLeft 推到右缘,无节流,逐帧小步滑动自然顺滑;
+// 溢出时两端渐隐 mask;行号变化(换行)时新行自下淡入。摘要只在头部,不影响正文渲染成本
+const previewEls = new Map<number, HTMLElement>()
+const previewTxtEls = new Map<number, HTMLElement>()
+const previewROs = new Map<number, ResizeObserver>()
+const previewFade = reactive(new Map<number, boolean>())
+const previewRollLine = new Map<number, number>() // 上次淡入时的行号(行号变化才播)
+
+function syncPreview(i: number) {
+  const vp = previewEls.get(i)
+  if (!vp) return
+  vp.scrollLeft = vp.scrollWidth
+  const fade = vp.scrollWidth > vp.clientWidth + 1
+  if (previewFade.get(i) !== fade) previewFade.set(i, fade)
+}
+
+function attachPreviewRO(i: number) {
+  const vp = previewEls.get(i)
+  const txt = previewTxtEls.get(i)
+  if (!vp || !txt || previewROs.has(i)) return
+  const ro = new ResizeObserver(() => syncPreview(i))
+  ro.observe(vp)
+  ro.observe(txt)
+  previewROs.set(i, ro)
+  syncPreview(i) // 挂载即对齐一次
+}
+
+function teardownPreviewRO(i: number) {
+  if (previewEls.has(i) || previewTxtEls.has(i)) return // 另一半还在(重挂载竞态),等齐再拆
+  previewROs.get(i)?.disconnect()
+  previewROs.delete(i)
+}
+
+function notePreview(i: number, el: any) {
+  if (el) {
+    previewEls.set(i, el as HTMLElement)
+    attachPreviewRO(i)
+  } else {
+    previewEls.delete(i)
+    teardownPreviewRO(i)
+  }
+}
+
+function notePreviewTxt(i: number, el: any) {
+  if (el) {
+    previewTxtEls.set(i, el as HTMLElement)
+    attachPreviewRO(i)
+  } else {
+    previewTxtEls.delete(i)
+    teardownPreviewRO(i)
+  }
+}
+
+// ───────── 思考正文:追加块链(修长思考流式假死) ─────────
+// 根因:流式期间每帧对"不断增长的全量 pre-wrap 文本"整段重排,成本随文本线性涨,累计 O(n²),
+// 主线程被打满假死(转圈动画在合成线程所以还在转)。详见 docs/thinking-body-streaming-perf.md。
+// 方案(追加块链):正文按 \n 边界封块,攒满约 SEAL_MAX 字符封一块;已封块文本永不再变
+// → 浏览器缓存其排版,每帧只重排"当前未封块"(0→SEAL_MAX 锯齿,有界),累计 O(n)。
+// 全部已到文本常驻 DOM:上滚到哪都是真文本——无占位、无估算、无阅读上限、无空白;
+// 流式追加都在视口下方,阅读位置天然不动 → 无需冻结/扩窗/修正,流结束也无需转全文。
+// 代价:稀疏巨行(几万字无换行)存活期间每帧 O(巨行),瞬态,过行即恢复——真实思考
+// 文本巨行罕见,接受(此前"估算行高虚拟窗口"的教训:估算只配做装饰,定位必须实测)。
+const SEAL_MAX = 4096 // 封块阈值(字符)= 每帧重排成本的上界(锯齿 0→SEAL_MAX)
+const PIN_NEAR = 40 // 距底多少像素内视为钉底(同原语义)
+
+interface Chain {
+  text: string
+  rows: string[] // 按 \n 切分(增量维护);rows[R-1] 是可能仍在生长的末行
+  sealed: string[] // 已封块文本(不可变;封块时一次性 join)
+  sealedRows: number // rows[0..sealedRows) 已封入 sealed
+  sealedChars: number // 已封字符数(含行间换行)——未封尾段 = text.slice(sealedChars)
+  countedRows: number // 完整行中已把字符计入 openChars 的行数(sealedRows..countedRows 为已计未封)
+  openChars: number // 当前未封块已累计字符数 = Σ rows[sealedRows..countedRows).length+1
+}
+const chains = reactive(new Map<number, Chain>())
+
 const bodyEls = new Map<number, HTMLElement>()
 const bodyPinned = new Map<number, boolean>()
+// 展开态滚动边缘文字渐隐:上/下有未露内容(scrollTop>1 /
+// 距底>1)时,对应边缘 14px 渐隐;由 onBodyScroll 驱动,状态翻转才写(防逐帧重渲染)
+const bodyShade = reactive(new Map<number, { top: boolean; bottom: boolean }>())
+
+function updateShade(i: number, el: HTMLElement) {
+  const top = el.scrollTop > 1
+  const bottom = el.scrollHeight - el.scrollTop - el.clientHeight > 1
+  const cur = bodyShade.get(i)
+  if (!cur || cur.top !== top || cur.bottom !== bottom) bodyShade.set(i, { top, bottom })
+}
 
 function noteBody(i: number, el: any) {
   if (el) bodyEls.set(i, el as HTMLElement)
   else bodyEls.delete(i)
 }
 
+/** 行切分 + 封块同步到最新文本(尾部追加走增量;块边界只落在 \n 处,绝不开在行中间) */
+function syncChain(c: Chain, text: string) {
+  if (text === c.text) return
+  if (text.startsWith(c.text)) {
+    const parts = text.slice(c.text.length).split('\n')
+    const base = c.rows.length - 1
+    c.rows[base] += parts[0] // 追加段首段并入末行(可能是未换行的续写)
+    for (let k = 1; k < parts.length; k++) c.rows.push(parts[k])
+  } else {
+    c.rows = text.split('\n')
+    c.sealed = []
+    c.sealedRows = 0
+    c.sealedChars = 0
+    c.countedRows = 0
+    c.openChars = 0
+  }
+  c.text = text
+  // 封块:完整行(rows[0..R-1))攒够 SEAL_MAX 就封;单行超长自成超重块(瞬态成本,过行即恢复)。
+  // 只对新完成的行计账(countedRows),已计入 openChars 的行绝不重复累加——否则每帧重复
+  // 扫描会把 acc 虚报上去,几百字就封一块(实测踩坑:块均 600 字符,封块频率 7 倍于设计)
+  while (c.countedRows < c.rows.length - 1) { // rows[countedRows] 完整 = 后面还有 \n
+    c.openChars += c.rows[c.countedRows].length + 1
+    c.countedRows++
+    if (c.openChars >= SEAL_MAX) {
+      c.sealed.push(c.rows.slice(c.sealedRows, c.countedRows).join('\n'))
+      c.sealedChars += c.openChars
+      c.sealedRows = c.countedRows
+      c.openChars = 0
+    }
+  }
+}
+
+function ensureChain(i: number, text: string): Chain {
+  let c = chains.get(i)
+  if (!c) {
+    c = reactive({ text: '', rows: [''], sealed: [], sealedRows: 0, sealedChars: 0, countedRows: 0, openChars: 0 })
+    chains.set(i, c)
+  }
+  syncChain(c, text)
+  return c
+}
+
 function onBodyScroll(i: number, e: Event) {
   const el = e.target as HTMLElement
-  bodyPinned.set(i, el.scrollHeight - el.scrollTop - el.clientHeight < 40)
+  bodyPinned.set(i, el.scrollHeight - el.scrollTop - el.clientHeight < PIN_NEAR)
+  updateShade(i, el)
+}
+
+/** 正文块链:已封块(不可变文本,Vue/浏览器双层跳过)+ 未封尾段 */
+const bodyBlocks = computed(() => {
+  const out: Record<number, { sealed: string[]; live: string }> = {}
+  const steps = props.message.steps ?? []
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i] as any
+    if (!isThinking(s)) continue
+    const c = chains.get(i)
+    if (!c || !isOpen(i)) continue
+    out[i] = { sealed: c.sealed, live: c.text.slice(c.sealedChars) }
+  }
+  return out
+})
+
+/** 流式时同步所有展开的思考正文:增量行切分+封块(每帧 O(增量+未封块)),按实时位置决定钉底 */
+async function syncThinkingBodies() {
+  await nextTick() // toggleRow 直调时 DOM 尚未落定;watcher(flush post)路径多等一拍无副作用
+  const steps = props.message.steps ?? []
+  for (const [i, el] of bodyEls) {
+    const s = steps[i] as any
+    if (!s || !isThinking(s)) {
+      if (!isOpen(i)) continue
+      if (bodyPinned.get(i) !== false) el.scrollTop = el.scrollHeight // 工具详情等:照旧整段跟随
+      continue
+    }
+    // 块链对所有思考步增量维护(折叠态也要行号供摘要换行检测)
+    const c = ensureChain(i, s.text || '')
+    // 换行时新行自下淡入(行号变化才播;滚动与渐隐由 ResizeObserver 驱动,此处不碰)
+    const lineNo = c.rows.length
+    if (previewRollLine.get(i) !== lineNo) {
+      const first = !previewRollLine.has(i)
+      previewRollLine.set(i, lineNo)
+      const txt = previewTxtEls.get(i)
+      if (!first && txt) {
+        txt.animate?.(
+          [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }],
+          { duration: 200, easing: 'ease-out' },
+        )
+      }
+    }
+    if (!isOpen(i)) continue
+    // 跟随与否以【此刻实时位置】为准,不信滚动事件记账:滚动事件是异步派发的,逐帧重钉
+    // 会在事件派发前把 scrollTop 拽回底部,事件里读到"在底部"就永远停不住(实测踩坑)。
+    // 但"刚打开"(从未钉过)不判位——此时 scrollTop=0 会被误判成用户上滚,自锁成永不跟随。
+    const bp = bodyPinned.get(i)
+    if (bp === false) continue // 阅读态:追加都在视口下方,零操作,阅读位置天然不动
+    if (bp === true) {
+      const distBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+      if (distBottom >= PIN_NEAR) {
+        bodyPinned.set(i, false)
+        continue
+      }
+    }
+    await nextTick() // 等块链更新落定再钉底,读到的 scrollHeight 才是新值
+    const el2 = bodyEls.get(i)
+    if (el2) el2.scrollTop = el2.scrollHeight
+  }
 }
 
 watch(
   () => props.message,
   () => {
-    for (const [i, el] of bodyEls) {
-      if (!isOpen(i) || bodyPinned.get(i) === false) continue
-      el.scrollTop = el.scrollHeight
-    }
+    void syncThinkingBodies()
   },
-  // flush post:默认 pre 在 DOM 更新前读 scrollHeight,读到的是旧值——最后一帧的增量
-  // 跟不上,流结束后思考正文停在离底部一帧的位置(看似被截断)
+  // flush post:DOM 更新后运行,读到的 scrollHeight 才是新值(否则流结束停在离底一帧处)
   { deep: true, flush: 'post' },
 )
 
@@ -337,12 +674,18 @@ function imgSrc(file: string) {
       <div v-if="s.kind === 'content'" class="md" data-copy v-html="html((s as any).text)" />
       <!-- 思考行:悬停高亮的折叠行(默认收起,同桌面端);正文左描边、灰字、限高滚动 -->
       <details v-else-if="isThinking(s)" class="seg" :open="isOpen(i)" @toggle="isOpen(i) !== ($event.target as HTMLDetailsElement).open && toggleRow(i)">
-        <summary>
+        <summary @click="onSegSummaryClick(i, true, $event)">
           <span class="chev ms">arrow_right</span>
           <span class="seg-header" :class="{ run: s.isActive }">{{ s.header }}</span>
-          <span class="seg-preview">{{ preview(s as any) }}</span>
+          <!-- 摘要行仅流式期间显示,思考结束即清空(完成后只留"思考 · X 秒"头部) -->
+          <span v-if="(s as any).isActive" class="seg-preview" :class="{ fade: previewFade.get(i) }" :ref="el => notePreview(i, el)"><span class="seg-preview-txt" :ref="el => notePreviewTxt(i, el)">{{ preview(s as any) }}</span></span>
         </summary>
-        <div class="seg-body" data-copy :ref="el => noteBody(i, el)" @scroll="onBodyScroll(i, $event)">{{ s.text }}</div>
+        <div class="seg-body" :class="{ 'mask-top': bodyShade.get(i)?.top, 'mask-bottom': bodyShade.get(i)?.bottom }" data-copy :ref="el => noteBody(i, el)" @scroll="onBodyScroll(i, $event)">
+          <!-- 追加块链:已封块文本不可变(浏览器缓存排版,每帧只重排未封尾块);块边界都在
+               换行处,视觉与整段 pre-wrap 完全一致;全部已到文本常驻 DOM,上滚无空白无上限 -->
+          <div v-for="(blk, bi) in bodyBlocks[i]?.sealed" :key="bi" class="seg-blk">{{ blk }}</div>
+          <div class="seg-blk">{{ bodyBlocks[i]?.live ?? s.text }}</div>
+        </div>
       </details>
       <!-- 工具行:齿轮(运行中旋转/完成√)+ 名称 + 摘要 + 结果摘要(错红)+ 行数统计;
            文件类工具(写入/编辑/补丁)展开为 IDE 风格 diff 卡片,其余展开为详情 -->
@@ -353,7 +696,7 @@ function imgSrc(file: string) {
         :open="isOpen(i)"
         @toggle="($event.target as HTMLDetailsElement).open !== isOpen(i) && toggleRow(i)"
       >
-        <summary @click="!canExpand(s) && $event.preventDefault()">
+        <summary @click="onToolSummaryClick(i, s, $event)">
           <span class="tool-icon ms" :class="{ spin: (s as any).isRunning, fill: (s as any).isRunning }">{{ (s as any).isRunning ? 'settings' : 'check' }}</span>
           <span class="tool-name" :class="{ run: (s as any).isRunning, skill: (s as any).toolName === 'skill', mcp: String((s as any).toolName || '').startsWith('mcp_'), sub: String((s as any).toolName || '').startsWith('sub_') }">{{ (s as any).displayName }}</span>
           <span class="tool-summary">
@@ -753,10 +1096,28 @@ function imgSrc(file: string) {
 }
 
 .seg-preview {
+  flex: 1 1 auto; /* 占满剩余行宽 */
+  min-width: 0; /* flex 子项默认 min-width:auto 不许收缩:预览文本(≤200 字)会把气泡撑到
+                   ~2600px 宽,气泡宽度随预览逐行锯齿增长(实测),省略号也因此从未生效 */
+  /* 锁定像素行高:预览文本逐帧变化,「——」「⇒」等回退字体字形的 ascent/descent 与主字体
+     不同,基线对齐后的行盒高度在两种值间翻转(实测摘要行 25↔27px 逐帧振荡 = 整窗 ±2px
+     抖动的根源);px 行高使行盒与字形无关(超高字形由 overflow:hidden 裁掉,视觉无感) */
+  line-height: 20px;
   font-style: italic;
   margin-left: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seg-preview.fade {
+  /* 溢出时的两端渐隐:左侧滚出的字符淡出,右缘留一点"仍在写入"的提示 */
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+}
+.seg-preview-txt {
+  /* 内层文本 span:inline-block 才有稳定的边框盒供 ResizeObserver 观察(inline 观察不到),
+     宽度随文本增长 → RO fire → viewport 贴右缘 */
+  display: inline-block;
   white-space: nowrap;
 }
 
@@ -770,6 +1131,16 @@ function imgSrc(file: string) {
   line-height: 1.55;
   max-height: 280px;
   overflow-y: auto;
+  /* 滚动边缘文字渐隐:上/下有未露内容时对应边缘 14px
+     渐隐——CSS 变量默认 0px = 不渐隐,mask-top/mask-bottom 类按滚动状态切换 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top, 0px), #000 calc(100% - var(--fade-bottom, 0px)), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade-top, 0px), #000 calc(100% - var(--fade-bottom, 0px)), transparent 100%);
+}
+.seg-body.mask-top {
+  --fade-top: 14px;
+}
+.seg-body.mask-bottom {
+  --fade-bottom: 14px;
 }
 
 /* ───── 工具行 ───── */

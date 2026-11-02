@@ -1244,6 +1244,14 @@ async function send() {
 async function stop() {
   try {
     await stopSession(agentId.value, props.sessionId)
+    // 中断不产生 complete/turn_ended/error 帧,思考步的 isActive 不会被收口,头部 shimmer
+    // 会一直闪(实测)。这里手动收口 + 拉快照对齐(「已中断」分割线随快照上屏)。
+    const s = state.value
+    const m = s?.messages[s.messages.length - 1]
+    if (m && m.role === 'assistant') endThinking(m)
+    endLlmRun()
+    await refetch()
+    scrollBottom()
   } catch (e) {
     showErr(String(e))
   }
@@ -2311,9 +2319,51 @@ function scrollBottom(force = false) {
   nextTick(() => {
     const el = listEl.value
     if (!el) return
+    if (listAnimating && !force) return // 平滑滚动接管期间,不做逐帧瞬钉(会打断动画)
     if (!force && el.scrollHeight - el.scrollTop - el.clientHeight < 160) el.scrollTop = el.scrollHeight
     else if (force) el.scrollTop = el.scrollHeight
   })
+}
+
+let listAnimating = false
+let listAnimRaf = 0
+
+/** 列表平滑滚到底(思考卡展开用):内容还在增长,目标取【实时底】;用户中途滚动立即让位 */
+function animateListToBottom() {
+  const el = listEl.value
+  if (!el) return
+  cancelAnimationFrame(listAnimRaf)
+  const start = el.scrollTop
+  const startT = performance.now()
+  const DUR = 320
+  let lastSet = start
+  listAnimating = true
+  const step = (t: number) => {
+    if (Math.abs(el.scrollTop - lastSet) > 1) {
+      listAnimating = false
+      return // 用户滚动了,让位
+    }
+    const p = Math.min(1, (t - startT) / DUR)
+    const eased = 1 - Math.pow(1 - p, 3) // easeOutCubic
+    const target = el.scrollHeight - el.clientHeight
+    const next = start + (target - start) * eased
+    el.scrollTop = next
+    lastSet = next
+    if (p < 1) listAnimRaf = requestAnimationFrame(step)
+    else {
+      el.scrollTop = el.scrollHeight
+      listAnimating = false
+    }
+  }
+  listAnimRaf = requestAnimationFrame(step)
+}
+
+/** 思考卡展开:原生 details 在 click 默认动作里同步长高 ~280px,等 toggle 事件到达时
+ *  距底距离已是展开后的(读实时状态会误判)。改读 listAtBottom——它由真实滚动事件维护,
+ *  展开只改 scrollHeight 不改 scrollTop、不触发滚动事件,保留的正是展开前的贴底状态。
+ *  贴底时平滑滚到新底(原地展开+顺滑跟随,不做瞬跳) */
+function onThinkingExpand() {
+  if (listAtBottom.value) animateListToBottom()
 }
 
 /** 向上滚近顶:按页前插更早的历史行,并补偿 scrollTop 保持视觉位置不动;
@@ -2344,9 +2394,13 @@ async function loadOlder() {
   }
 }
 
+const listAtBottom = ref(true) // 列表是否贴底(跟随语义同 scrollBottom 的 160px);供思考卡展开时判断是否强制跟随
+
 function onListScroll() {
   const el = listEl.value
-  if (el && el.scrollTop < 120) void loadOlder()
+  if (!el) return
+  listAtBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 160
+  if (el.scrollTop < 120) void loadOlder()
 }
 
 // ───────── 会话切换冻结态:首帧起隐藏消息区(叠微光骨架),数据就绪钉底后淡入揭示 ─────────
@@ -2604,6 +2658,7 @@ if (state.value) nextTick(pinReveal)
             :session-id="props.sessionId"
             @auth="(step: any, allow: boolean, trust: boolean) => onAuth(step, allow, trust)"
             @open-sub-run="openSubAgentRun"
+            @expand-thinking="onThinkingExpand"
           />
           <!-- 运行指示行:聊天文本最下面一行,形态与显隐同输入框圆盘旁的 spinner(isStreaming 同步) -->
           <div v-if="state && state.isStreaming" class="turn-row">
