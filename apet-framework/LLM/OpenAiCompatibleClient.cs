@@ -110,11 +110,13 @@ public sealed class OpenAiCompatibleClient : ILlmClient
 
         using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var reader = new StreamReader(stream);
+        var declaredFinish = false; // 服务端已回传 finish_reason(未回传时流结束按内容补发终态,见循环后)
+        var sawToolCall = false;    // 流中出现过工具调用增量(补发终态时据此选 ToolCalls/Stop)
         while (true)
         {
             var line = await reader.ReadLineAsync(cancellationToken);
             if (line is null)
-                yield break;
+                break;
             if (line.Length == 0 || !line.StartsWith("data:", StringComparison.Ordinal))
                 continue;
 
@@ -122,7 +124,7 @@ public sealed class OpenAiCompatibleClient : ILlmClient
             if (payload == "[DONE]")
             {
                 _log.Info("LLM streaming response finished [DONE]");
-                yield break;
+                break;
             }
 
             // 逐帧设防:个别兼容端点会夹带非 JSON 行/缺字段 chunk(如 tool_call 缺 index),
@@ -156,10 +158,20 @@ public sealed class OpenAiCompatibleClient : ILlmClient
                         _log.Error($"LLM stream chunk skipped mid-parse: {ex.Message}");
                         break;
                     }
+                    if (evt is FinishedEvent)
+                        declaredFinish = true;
+                    else if (evt is ToolCallDeltaEvent)
+                        sawToolCall = true;
                     yield return evt;
                 }
             }
         }
+
+        // 个别 OpenAI 兼容端点不回传 finish_reason(正文后直接 [DONE] 或断流)。缺失时按流内容
+        // 补发终态事件:有工具增量按 ToolCalls(宿主继续执行工具),否则按 Stop——消息链钩子
+        // (气泡隐藏倒计时、TTS 收口)依赖该事件,缺失会让桌宠气泡常驻不消失、朗读不触发。
+        if (!declaredFinish)
+            yield return new FinishedEvent(sawToolCall ? FinishReason.ToolCalls : FinishReason.Stop);
     }
 
     private ChatRequest BuildBody(ChatRequest request, bool stream)
