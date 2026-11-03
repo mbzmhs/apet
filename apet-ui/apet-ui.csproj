@@ -52,7 +52,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <!-- 程序图标(exe 文件/资源管理器/任务栏) -->
     <ApplicationIcon>ds.ico</ApplicationIcon>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <!-- 目标平台:不指定时 NuGet 会把 SkiaSharp/SQLite 等包的全平台原生库(22 个 RID,约 330MB)
          都拷进输出 runtimes\;锁定 win-x64 后只保留本平台原生库 -->
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

@@ -13,7 +13,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>NvidiaMonitor</RootNamespace>
     <AssemblyName>NvidiaMonitor</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
   </PropertyGroup>
 
   <!-- 自定义 UI 资产:ui 目录整体内嵌为资源(如 NvidiaMonitor.ui.index.html),宿主经 ui/* 端点伺服给同源 iframe -->

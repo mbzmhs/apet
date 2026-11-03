@@ -65,7 +65,7 @@ public sealed class TtsClientPlugin : AgentPluginBase
     private readonly Channel<(string Text, string Voice)> _queue =
         Channel.CreateUnbounded<(string Text, string Voice)>();
     private CancellationTokenSource? _workerCts;
-    private string _currentVoice = "neutral";
+    private string _currentVoice = ""; // 初始值随即被 Initialize 的 EngineVoice 覆盖;空 = 引擎默认声线
 
     // 流式缓冲:原始未处理文本 / 按句模式的句尾残留 / AfterReply 模式的整段积累
     private readonly StringBuilder _pendingText = new();
@@ -134,8 +134,8 @@ public sealed class TtsClientPlugin : AgentPluginBase
     [PluginSetting("serverVoice", Description = "Server engine: voice/emotion sent as the request 'voice' parameter", MinLength = 0, MaxLength = 128)]
     public string ServerVoice { get; set; } = "neutral";
 
-    [PluginSetting("gsvVoice", Description = "GSV engine: default voice (name or name/emotion); tags switch it temporarily, reset to this after each reply", MinLength = 0, MaxLength = 128)]
-    public string GsvVoice { get; set; } = "neutral";
+    [PluginSetting("gsvVoice", Description = "GSV engine: default voice (name or name/emotion); empty = engine default (first configured voice)", MinLength = 0, MaxLength = 128)]
+    public string GsvVoice { get; set; } = "";
 
     /// <summary>Windows 引擎:系统语音角色名(空 = 系统默认角色)。语速由 speed 设置映射。</summary>
     [PluginSetting("sapiVoice", Description = "Windows engine: system voice name (empty = system default)", MinLength = 0, MaxLength = 128)]

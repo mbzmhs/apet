@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 图片预览灯箱:应用内弹出(Esc/点空白关闭),带 下载 / 缩放(按钮+滚轮)/ 拖拽平移。
 // MessageBubble(消息图片)与 ChatView(未发送附件预览)共用。
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 
 const props = defineProps<{ src: string; name?: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -11,6 +11,20 @@ const tx = ref(0)
 const ty = ref(0)
 const dragging = ref(false)
 const MAX = 8
+
+/** 图片样式:fit 测出前不给显式宽高(交给 .unmeasured 的 contain 约束),
+ *  测出后给显式 px 尺寸(随缩放变化) */
+const imgStyle = computed(() => {
+  const s: Record<string, string> = {
+    transform: `translate(${tx.value}px, ${ty.value}px)`,
+    cursor: scale.value > 1 ? (dragging.value ? 'grabbing' : 'grab') : 'default',
+  }
+  if (fit.value.w) {
+    s.width = `${fit.value.w * scale.value}px`
+    s.height = `${fit.value.h * scale.value}px`
+  }
+  return s
+})
 
 /** 图片在缩放 1:1 时的适配尺寸(stage 内 contain);缩放直接改布局尺寸,避免 transform 只放大视觉被截断 */
 const fit = ref({ w: 0, h: 0 })
@@ -130,12 +144,8 @@ onUnmounted(() => {
         <img
           ref="imgEl"
           :src="src"
-          :style="{
-            width: (fit.w ? fit.w * scale : undefined) + 'px',
-            height: (fit.h ? fit.h * scale : undefined) + 'px',
-            transform: `translate(${tx}px, ${ty}px)`,
-            cursor: scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'default',
-          }"
+          :class="{ unmeasured: !fit.w }"
+          :style="imgStyle"
           @load="onImgLoad"
           @mousedown="onGrabDown"
         />
@@ -183,6 +193,14 @@ onUnmounted(() => {
   border-radius: 10px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.5);
   user-select: none;
+}
+
+.lb-stage img.unmeasured {
+  /* fit 未测出前先按 contain 缩在 stage 内:避免首帧按原图自然尺寸渲染(从大变小闪烁)。
+     contain 结果与 measure() 算出的显式尺寸一致,切换无感;
+     max-* 不能常驻——否则会钳死缩放后的尺寸,故仅在未测出时生效 */
+  max-width: 100%;
+  max-height: 100%;
 }
 
 /* 底部工具条:缩放/下载/关闭 */
