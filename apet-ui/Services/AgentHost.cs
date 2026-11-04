@@ -550,7 +550,7 @@ public sealed class AgentHost
             sb.Append("\n范围: ").Append(string.Join("  ", ctx.Effect.Paths));
 
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var card = new AuthRequestViewModel(sb.ToString(), tcs);
+        var card = new AuthRequestViewModel(sb.ToString(), null, null, tcs);
         if (!string.IsNullOrEmpty(ctx.MainSessionId))
             Web.WebEventHub.RegisterAuth(Config.Id, ctx.MainSessionId, card); // Web 形态:浏览器经 REST 给出结论
         SubAgentAuthPopup?.Invoke(card); // 主窗弹窗(与主对话鉴权弹窗同通路)

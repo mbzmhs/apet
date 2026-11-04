@@ -358,7 +358,7 @@ function applyMcpEditor() {
   }
 }
 
-/** 导入:单个服务器对象 / {"servers":[…]} / Claude Desktop 风格 {"mcpServers":{名称:{command,args,env}}} */
+/** 导入:单个服务器对象 / {"servers":[…]} / MCP 常见配置格式 {"mcpServers":{名称:{command,args,env}}} */
 function applyMcpImport() {
   try {
     const parsed = JSON.parse(mcpImportText.value)
@@ -991,11 +991,10 @@ const categories: Category[] = [
   { key: 'compress', title: '压缩', sub: 'Token 上限在「模型服务」里设置。', fields: [] },
   { key: 'tools', title: '工具', sub: '按功能分组开关工具:关闭的整组工具不会提供给模型调用。', fields: [] },
   {
-    key: 'security', title: '权限', sub: '存在风险的文件操作将请求确认;白名单目录内的操作直接放行。', fields: [
+    key: 'security', title: '权限', sub: '存在风险的文件操作将请求确认;白名单目录内的操作直接放行。终端命令跟随默认目录权限:只读档仅放行只读命令,读写档除灾难命令外静默执行,完全访问=全放行,全部询问=全弹。', fields: [
       { path: 'security.defaultWorkingDirectory', label: '默认工作目录(新建会话继承)', type: 'dir' },
       { path: 'security.workspaceRoot', label: '临时工作区根目录(未设工作目录的会话自动按会话建工作区;空 = 默认位置)', type: 'dir' },
       { path: 'security.defaultWorkingDirectoryAccess', label: '默认目录权限', type: 'select', w: 280, options: ACCESS },
-      { path: 'security.otherDirectoriesAccess', label: '其他目录权限', type: 'select', w: 280, options: ACCESS.slice(0, 3) },
       { path: 'security.whitelist', label: '白名单目录(任何操作放行)', type: 'paths' },
     ],
   },

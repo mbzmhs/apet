@@ -8,7 +8,9 @@ using System.Windows;
 using APet.Framework.Logging;
 using APet.Framework.Models;
 using APet.Framework.Plugin;
+using APet.Framework.Security;
 using APet.Framework.Session;
+using APet.Plugins.BiliLive;
 using APet.Plugins.BackgroundRun;
 using APet.UI.Services;
 using APet.UI.ViewModels;
@@ -67,6 +69,22 @@ public sealed class WebServer
         builder.WebHost.UseUrls("http://127.0.0.1:" + FindFreePort(DefaultPort));
 
         var app = builder.Build();
+        // 站点闸门:Host/Origin 两个头由浏览器协议保证不可被页面伪造。校验 Host 必须是环回
+        // (域名重绑定时 Host 是攻击者自己的域名,拒),带了 Origin 的请求其源主机也必须是环回
+        // (跨站 POST/WS 时 Origin 是攻击者的源,拒)。地址栏直开/内嵌窗口/curl 等无 Origin 的
+        // 非浏览器调用照常放行。端口动态([DefaultPort, +20)),校验只看主机部分。
+        app.Use(async (ctx, next) =>
+        {
+            if (NetworkGuard.IsAllowedSiteRequest(
+                    ctx.Request.Headers.Host, ctx.Request.Headers.Origin))
+            {
+                await next();
+                return;
+            }
+            ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+            ctx.Response.ContentType = "application/json";
+            await ctx.Response.WriteAsync("{\"error\":\"forbidden\"}");
+        });
         // /api 请求含空路径段(如前端 agentId 未就绪拼出 /api/agents//…)一律 404 JSON:
         // 这类 URL 匹配不到路由会落进 SPA 回退返回 HTML,任何 r.json() 都会炸
         // ("Unexpected token '<' ... not valid JSON" 横幅即由此来)
@@ -181,6 +199,11 @@ public sealed class WebServer
         {
             // 连接管道中断:同上
         }
+        finally
+        {
+            // 不释放则 TimerQueue 强引用常驻计时器,每条断开的 SSE 连接泄漏一个(断线重连持续累积)
+            ping.Dispose();
+        }
     }
 
     /// <summary>单总线 SSE 泵:把订阅通道里的帧逐条写入响应直至断开,期间 15s ping 保活。</summary>
@@ -226,6 +249,10 @@ public sealed class WebServer
         catch (IOException)
         {
             // 连接管道中断:同上
+        }
+        finally
+        {
+            ping.Dispose(); // 同双总线泵:不释放则每条断开的 SSE 泄漏一个常驻计时器
         }
     }
 
@@ -1423,36 +1450,66 @@ public sealed class WebServer
             return ok ? Results.Json(new { ok = true }) : Results.Conflict(new { error = "会话已产生对话,工作目录已锁定" });
         });
 
+        // 资源管理器打开会话工作目录:目录选择胶囊在锁定/归档/流式中为禁用态,点击改为直达文件夹
+        // (目录由服务端按会话解析,客户端不可注入任意路径)
+        app.MapPost("/api/agents/{agentId}/sessions/{sessionId}/workdir/open", (string agentId, string sessionId) =>
+        {
+            var path = Application.Current.Dispatcher.Invoke(() => FindSession(agentId, sessionId)?.WorkingDirectory);
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                return Results.NotFound();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{path}\""));
+            return Results.Json(new { ok = true });
+        });
+
         // ───────── 侧边栏:任务清单 / 后台任务 / 直播事件(轻量轮询) ─────────
 
-        app.MapGet("/api/agents/{agentId}/sessions/{sessionId}/sidebar", (string agentId, string sessionId) =>
+        app.MapGet("/api/agents/{agentId}/sessions/{sessionId}/sidebar", async (string agentId, string sessionId) =>
         {
-            var sidebar = Application.Current.Dispatcher.Invoke(() =>
+            // 两段式:轻量快照(UI 线程,内存读)与插件数据提供器(后台线程,可能数秒)分离。
+            // 该端点前端每 3 秒轮询,GetPluginData 同步跑在 Dispatcher.Invoke 时,任一慢插件
+            // (NvidiaMonitor 的 nvidia-smi)都会周期性冻住 UI 线程——/plugins/{name}/data 曾因此修过,此处同款
+            SidebarFast fast;
+            try
             {
-                var rt = _manager.RequireRuntime(agentId);
-                var todos = rt.Host.Todo.StoreFor(sessionId).Snapshot()
-                    .Select(t => new TodoDto(t.Id, t.Content, t.Status))
-                    .ToList();
-                var tasks = rt.Host.Background.ManagerFor(sessionId).Snapshot()
-                    .Select(t => new TaskDto(t.Id, t.Title, t.Command, t.StatusText(),
-                        t.Status == BackgroundTaskStatus.Failed, t.StartedAt, t.EndedAt))
-                    .ToList();
-                var liveBound = rt.Host.BiliLive.BoundSessionId == sessionId;
-                var live = liveBound
-                    ? rt.Host.BiliLive.RecentEventsSnapshot()
-                        .Select(e => new LiveDto(e.Event.Kind.ToString(), e.Event.User, e.Event.Text, e.Event.PriceYuan, e.At.ToString("HH:mm:ss")))
-                        .ToList()
-                    : [];
-                var pluginData = rt.Host.PluginDataSnapshots(sessionId);
-                var uiPlugins = rt.Host.SidebarUiPlugins();
-                var statusPlugins = rt.Host.StatusPluginEntries(sessionId);
-                var bili = rt.Host.BiliLive.ConnectionStatus;
-                var biliDto = new BiliConnDto(bili.StateKey, bili.Host, bili.HostIndex, bili.HostCount,
-                    bili.Round, rt.Host.BiliLive.RoomCode, bili.InternalRoomId, bili.RoomLive,
-                    bili.Error, bili.ChangedAt, bili.NextRetryAt, rt.Host.BiliLive.ReceivedCount);
-                return new SidebarDto(todos, tasks, liveBound, live, pluginData, uiPlugins, statusPlugins, biliDto);
-            });
-            return Results.Json(sidebar);
+                fast = Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var rt = _manager.RequireRuntime(agentId);
+                    var liveBound = rt.Host.BiliLive.BoundSessionId == sessionId;
+                    return new SidebarFast(
+                        rt.Host,
+                        rt.Host.Todo.StoreFor(sessionId).Snapshot()
+                            .Select(t => new TodoDto(t.Id, t.Content, t.Status))
+                            .ToList(),
+                        rt.Host.Background.ManagerFor(sessionId).Snapshot()
+                            .Select(t => new TaskDto(t.Id, t.Title, t.Command, t.StatusText(),
+                                t.Status == BackgroundTaskStatus.Failed, t.StartedAt, t.EndedAt))
+                            .ToList(),
+                        liveBound,
+                        liveBound
+                            ? rt.Host.BiliLive.RecentEventsSnapshot()
+                                .Select(e => new LiveDto(e.Event.Kind.ToString(), e.Event.User, e.Event.Text, e.Event.PriceYuan, e.At.ToString("HH:mm:ss")))
+                                .ToList()
+                            : [],
+                        rt.Host.BiliLive.ConnectionStatus);
+                });
+            }
+            catch (InvalidOperationException)
+            {
+                return Results.NotFound();
+            }
+
+            // 插件数据面:UI 线程之外调用(与 /plugins/{name}/data 同一约定,插件失败只记日志不影响其他项)
+            var (pluginData, uiPlugins, statusPlugins) = await Task.Run(() =>
+                (fast.Host.PluginDataSnapshots(sessionId),
+                 fast.Host.SidebarUiPlugins(),
+                 fast.Host.StatusPluginEntries(sessionId)));
+
+            var bili = fast.Bili;
+            var biliDto = new BiliConnDto(bili.StateKey, bili.Host, bili.HostIndex, bili.HostCount,
+                bili.Round, fast.Host.BiliLive.RoomCode, bili.InternalRoomId, bili.RoomLive,
+                bili.Error, bili.ChangedAt, bili.NextRetryAt, fast.Host.BiliLive.ReceivedCount);
+            return Results.Json(new SidebarDto(fast.Todos, fast.Tasks, fast.LiveBound, fast.Live,
+                pluginData, uiPlugins, statusPlugins, biliDto));
         });
 
         // 插件数据面:GET 单插件数据(内置/外部插件均可实现;sessionId 可选)
@@ -1735,6 +1792,10 @@ public sealed class WebServer
     private sealed record CommandRequest(string? Text);
 
     private sealed record WorkdirRequest(string? Directory, string? Access);
+
+    /// <summary>/sidebar 两段式的第一段产物:UI 线程取好的轻量快照 + 后台阶段所需的宿主引用。</summary>
+    private sealed record SidebarFast(AgentHost Host, List<TodoDto> Todos, List<TaskDto> Tasks,
+        bool LiveBound, List<LiveDto> Live, LiveConnStatus Bili);
 
     /// <summary>应用退出时停机(阻塞至多 3s;退出竞态的异常直接吞掉)。</summary>
     public void Stop()

@@ -3,13 +3,16 @@
 
 export type StreamHandler = (type: string, data: any) => void
 
-export function subscribeStream(url: string, onEvent: StreamHandler): () => void {
+export function subscribeStream(url: string, onEvent: StreamHandler, onOpen?: () => void): () => void {
   const source = new EventSource(url)
   // 断线最小反馈:本文件没有错误回调机制,不为此扩 API,只留一行日志供排查
   // (EventSource 会自动重连;readyState:0=重连中 1=已连接 2=已关闭,2 即不再重连)
   source.onerror = () => {
     console.warn(`[sse] 连接中断,浏览器将自动重连: url=${url} readyState=${source.readyState}`)
   }
+  // 每次连接建立(含断线重连)通知调用方:断线窗口内丢失的帧没有重放机制,
+  // 必须补一次快照,否则收尾帧(turn_ended/complete)丢一次页面就永远停在运行中
+  source.onopen = () => onOpen?.()
   source.onmessage = (e) => {
     try {
       const frame = JSON.parse(e.data) as { type: string; data: any }

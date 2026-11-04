@@ -538,6 +538,7 @@ internal static partial class ToolCallPresenter
                     {
                         "http_error" => $"HTTP {GetInt64(root, "status")}",
                         "timeout" => "抓取超时",
+                        "blocked_host" => "目标为内网/回环地址,已拒绝",
                         _ => "抓取失败",
                     };
                     row.DetailBody = (row.DetailBody + "\n✗ " + SingleLine(resultJson)).Trim();

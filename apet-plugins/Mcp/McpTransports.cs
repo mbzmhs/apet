@@ -195,7 +195,7 @@ internal sealed class HttpTransport : McpTransport
         string body;
         if (mediaType.Contains("text/event-stream", StringComparison.OrdinalIgnoreCase))
         {
-            // Streamable HTTP 允许响应以 SSE 流交付(如 GitHub Copilot 端点):取首个事件的 data 帧
+            // Streamable HTTP 允许响应以 SSE 流交付(部分端点行为):取首个事件的 data 帧
             body = await ReadFirstSseDataAsync(resp, ct);
         }
         else

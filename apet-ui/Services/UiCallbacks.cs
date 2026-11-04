@@ -204,14 +204,14 @@ public sealed class UiCallbacks : AgentCallbacks
         CancellationToken cancellationToken = default)
     {
         // 鉴权卡片插入助手消息的步骤流(与工具行同序),等待用户允许/拒绝(取消运行视为拒绝)
-        var detail = BuildAuthDetail(toolCall, effect);
+        var (detail, reason, command) = BuildAuthCard(toolCall, effect, decision);
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var trustDirs = CollectTrustDirs(effect);
         AuthRequestViewModel card = null!;
         var permissionKey = ToolPermission.GetKey(toolCall.Name); // 文件修改类共用 "edit"
         await _dispatcher.InvokeAsync(() =>
         {
-            card = _assistant.AddAuthRequest(detail, trustDirs, tcs);
+            card = _assistant.AddAuthRequest(detail, reason, command, trustDirs, tcs);
             if (trustDirs.Count > 0)
                 card.TrustRequested = dirs => ApplyTrust(dirs, permissionKey);
             AuthorizationPopupRequested?.Invoke(card);
@@ -372,6 +372,34 @@ public sealed class UiCallbacks : AgentCallbacks
         if (scopeDirs.Count > 0)
             sb.Append("\n范围: ").Append(string.Join("  ", scopeDirs));
         return sb.ToString();
+    }
+
+    /// <summary>构建鉴权卡片三要素:纯文本详情(桌面弹窗沿用)、原因一行(档位/灾难判定的中文说明,
+    /// 由 CheckTerminal 的拒绝理由给出)、终端命令原文(Web 卡片代码块完整展示)。
+    /// 文件类工具无命令且拒绝理由是英文模板 → 均为 null,卡片沿用详情布局。</summary>
+    private (string Detail, string? Reason, string? Command) BuildAuthCard(
+        ToolCall toolCall, ToolEffect effect, AuthorizationResult decision)
+    {
+        var detail = BuildAuthDetail(toolCall, effect);
+        string? reason = null;
+        string? command = null;
+        if (ToolPermission.GetKey(toolCall.Name) == "terminal")
+        {
+            if (!decision.Allowed && !string.IsNullOrWhiteSpace(decision.Reason)
+                && decision.Reason != "denied by user")
+                reason = decision.Reason;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(toolCall.ArgumentsJson);
+                if (doc.RootElement.TryGetProperty("command", out var cmd))
+                    command = cmd.GetString();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // 参数非合法 JSON:命令展示缺省,详情仍可用
+            }
+        }
+        return (detail, reason, command);
     }
 
     /// <summary>受影响路径 → 所在目录(去重):文件取其父目录,目录本身原样。</summary>

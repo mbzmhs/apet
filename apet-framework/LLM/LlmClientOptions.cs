@@ -37,7 +37,7 @@ public sealed class LlmClientOptions
     /// "thinking" = thinking.type enabled/disabled(GLM、阿里百炼等,默认);
     /// "enable_thinking" = Qwen 原生布尔开关;
     /// "reasoning_effort" = OpenAI/llama.cpp 风格,携带具体强度(minimal/low/medium/high;关闭思考时不发送);
-    /// "all" = zcode 式全兼容,同时发送 thinking/enable_thinking/reasoning_effort/reasoning.effort(仅宽容端点);
+    /// "all" = 全兼容样式,同时发送 thinking/enable_thinking/reasoning_effort/reasoning.effort(仅宽容端点);
     /// "off" = 完全不发送思考字段(Gemini 兼容等严格端点,携带未知字段会 400)。
     /// 空 = 按 SendThinkingField 旧开关映射。
     /// </summary>

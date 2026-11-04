@@ -21,6 +21,7 @@ import {
   reportLastSession, reorderFolders, reorderSessions, resolveAuth, sendMessage, setCollapsedFolders, setFolderColor, setModel, setQueueDefer, setWorkdir,
   stopSession, takeQueueMessage, undoSession, unarchiveSession,
   moveQueueMessage,
+  openWorkdirFolder,
   getPendingAsks, resolveAsk,
   type AskAnswer, type AskPanelInfo, type AskQuestionInfo, type CommandInfo, type ProviderInfo,
 } from '../api/client'
@@ -230,12 +231,15 @@ onMounted(() => {
   patchObserver.observe(el, { childList: true, subtree: true, characterData: true })
   // load 不冒泡:capture 委托才能收到消息区内图片的加载完成
   el.addEventListener('load', onResourceLoad, true)
+  // 标签页切回前台:后台期间 SSE 若中断过,状态可能陈旧(转圈卡死)——补一次快照自愈
+  document.addEventListener('visibilitychange', onVisibilityRefetch)
 })
 
 onUnmounted(() => {
   patchObserver?.disconnect()
   patchObserver = null
   listEl.value?.removeEventListener('load', onResourceLoad, true)
+  document.removeEventListener('visibilitychange', onVisibilityRefetch)
 })
 
 // ───────── SSE 流式 ─────────
@@ -249,7 +253,13 @@ function openStream() {
   closeStream = subscribeStream(
     `/api/agents/${agentId.value}/sessions/${props.sessionId}/stream?withAgent=true`,
     handleEvent,
+    () => void refetch(), // 重连成功(含首次连接):补一次快照,断线窗口丢帧自愈,幂等无害
   )
+}
+
+/** 标签页切回前台时的快照自愈(转圈卡死兜底;后台标签的定时器被节流,回来补一次最可靠) */
+function onVisibilityRefetch() {
+  if (!document.hidden) void refetch()
 }
 
 /** 流式目标气泡:最后一条是助手气泡则复用,否则新建(其他标签页先发送时本地还没有) */
@@ -507,6 +517,7 @@ async function handleEvent(type: string, data: any) {
       endThinking(m)
       steps.push({
         kind: 'auth', authId: data.authId, detail: data.detail,
+        reason: data.reason, command: data.command,
         trustDirs: data.trustDirs ?? [], decided: false, granted: false,
       })
       break
@@ -1003,6 +1014,32 @@ async function applyWorkdirAccess(access: string) {
   } catch (e) {
     showErr(String((e as Error).message))
   }
+}
+
+// ───────── 工作目录权限档位:锁图标与配色 ─────────
+// 只读=正文色(深色主题下即白),读写=蓝,完全访问=橙,全部询问=绿
+
+const PERM_STYLE = {
+  ReadOnly: { icon: 'visibility', cls: 'perm-ro' },
+  ReadWrite: { icon: 'edit', cls: 'perm-rw' },
+  FullAccess: { icon: 'key', cls: 'perm-full' },
+  Ask: { icon: 'help', cls: 'perm-ask' },
+} as const;
+
+const permStyle = computed(() => {
+  const key = state.value?.workingDirectoryAccess as keyof typeof PERM_STYLE | undefined;
+  return (key && PERM_STYLE[key]) || PERM_STYLE.ReadWrite;
+});
+
+/** 工作目录胶囊:可选时开目录选择器;锁定/归档/流式中的禁用态点击改为用资源管理器打开当前目录 */
+function onWorkdirPillClick() {
+  if (!state.value) return;
+  if (!state.value.isWorkDirLocked && !isArchived.value && !state.value.isStreaming) {
+    workdirBrowser.value = true;
+    return;
+  }
+  if (state.value.workingDirectory)
+    void openWorkdirFolder(agentId.value, props.sessionId);
 }
 
 // ───────── 发送 / 停止 ─────────
@@ -2858,11 +2895,11 @@ if (state.value) nextTick(pinReveal)
               <button
                 v-if="state"
                 class="pill workdir"
-                :disabled="state.isStreaming || state.isWorkDirLocked || isArchived"
+                :class="{ locked: state.isStreaming || state.isWorkDirLocked || isArchived }"
                 :title="state.isWorkDirLocked
-                  ? (state.workingDirectory || '工作目录') + '(会话已产生对话,工作目录已锁定)'
+                  ? (state.workingDirectory || '工作目录') + '(会话已产生对话,工作目录已锁定;点击用资源管理器打开)'
                   : (state.workingDirectory || '选择本会话的工作目录(配合权限决定工具的读写范围)')"
-                @click="!state.isWorkDirLocked && !isArchived && (workdirBrowser = true)"
+                @click="onWorkdirPillClick"
               >
                 <span class="ms pill-ico">folder_open</span> {{ workdirName || '选择工作目录' }}
               </button>
@@ -2873,7 +2910,7 @@ if (state.value) nextTick(pinReveal)
                 @click="clearWorkdir"
               ><span class="ms">close</span></span>
               <div v-if="state" class="bare-wrap" title="工作目录权限:决定工具在目录内的读写范围">
-                <span class="ms lock-ico">lock</span>
+                <span class="ms lock-ico" :class="permStyle.cls">{{ permStyle.icon }}</span>
                 <AppSelect
                   class="bare"
                   :model-value="state.workingDirectoryAccess"
@@ -4387,7 +4424,20 @@ body.resizing-h * {
 .lock-ico {
   flex: none;
   font-size: 15.4px;
-  color: #e8a15c;
+  color: var(--fg-primary);
+}
+
+/* 权限档位配色:只读=正文色(深色主题下即白),读写=蓝,完全访问=橙,全部询问=绿 */
+.lock-ico.perm-rw {
+  color: #4d9fff;
+}
+
+.lock-ico.perm-full {
+  color: #ffa94d;
+}
+
+.lock-ico.perm-ask {
+  color: #43c17e;
 }
 
 .bare-wrap :deep(.asel) {

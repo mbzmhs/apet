@@ -255,7 +255,7 @@ public sealed class OpenAiCompatibleClient : ILlmClient
     /// "enable_thinking" = Qwen 原生布尔开关: none→false,其余→true;
     /// "reasoning_effort" = OpenAI/llama.cpp 风格,携带具体强度: default(开启)按 high 发送,
     /// xhigh/max→high,minimal/low/medium/high 原样,none→不发送(该样式无法表达"关闭",由服务端默认);
-    /// "all" = zcode 式全兼容: 同时发送 thinking/enable_thinking/reasoning_effort/reasoning.effort,
+    /// "all" = 全兼容样式: 同时发送 thinking/enable_thinking/reasoning_effort/reasoning.effort,
     /// 仅适合对未知字段宽容的端点(严格端点如 Gemini 兼容接口会 400);
     /// "off" = 完全不发送(历史默认行为,由服务端默认决定)。
     /// </summary>

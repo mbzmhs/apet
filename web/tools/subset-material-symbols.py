@@ -29,6 +29,7 @@ photo videocam mic picture_as_pdf attach_file done remove
 extension hub auto_awesome chevron_left info queue schedule drag_indicator unarchive paid
 delete_sweep
 drive_folder_upload create_new_folder forum
+key help
 """.split()
 
 

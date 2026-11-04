@@ -73,6 +73,7 @@ public sealed class TerminalTool : BuiltinToolBase
             {
                 Access = intent.StrongestAccess,
                 Paths = intent.Paths,
+                Dangerous = DangerousCommands.IsInvolved(intent),
             };
         }
         catch (JsonException)
@@ -424,7 +425,7 @@ public sealed class TerminalTool : BuiltinToolBase
 
         if (OperatingSystem.IsWindows())
         {
-            // Windows 默认走 PowerShell 而非 cmd(opencode 同款选择):cmd 的 start 内建命令把
+            // Windows 默认走 PowerShell 而非 cmd:cmd 的 start 内建命令把
             // 第一个带引号参数当「窗口标题」,模型写 start "https://…" 只会弹一个空 cmd 窗口;
             // PowerShell 的 start 是 Start-Process 别名,URL/文件直接打开,常见命令无需学任何 shell 陷阱。
             // pwsh(7)非系统自带不作默认;需要 cmd/其他终端时在 Shell 配置里指定。

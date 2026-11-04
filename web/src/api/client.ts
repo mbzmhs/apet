@@ -518,6 +518,16 @@ export async function setWorkdir(agentId: string, sessionId: string, directory: 
   if (!res.ok) throw new Error(`设置失败(HTTP ${res.status})`)
 }
 
+/** 用资源管理器打开会话工作目录(目录由服务端按会话解析;目录未设时 404 → 返回 false) */
+export async function openWorkdirFolder(agentId: string, sessionId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/agents/${agentId}/sessions/${sessionId}/workdir/open`, { method: 'POST' })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 export interface FsEntry {
   target?: string | null
   name: string

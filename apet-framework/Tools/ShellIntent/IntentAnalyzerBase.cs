@@ -244,15 +244,17 @@ public abstract class IntentAnalyzerBase : IIntentAnalyzer
                 var (start, end, hereString) = op.Value;
                 if (hereString)
                 {
-                    // <<< 行内 here-string:内容到行尾
-                    sb.Append(line[..start].TrimEnd());
-                    sb.Append('\n');
+                    // <<< 行内 here-string:整行保留——内容成为命令参数($() 展开判 Uncertain,纯文本是无害读),
+                    // 且操作符行上 ; && 之后的命令不被吞掉
+                    sb.Append(line).Append('\n');
                     i++;
                     continue;
                 }
-                var delim = ReadHeredocDelimiter(line, end);
+                // 剥正文但保留操作符行剩余部分(<< 定界符标记本身丢弃):此前整段丢弃,
+                // cat <<EOF; rm -rf x 只分析出 cat,分号/&& 之后的命令在只读/读写档被静默放行
+                var (delim, tokenEnd) = ReadHeredocDelimiter(line, end);
                 var dash = start + 2 < line.Length && line[start + 1] == '<' && line[start + 2] == '-';
-                sb.Append(line[..start].TrimEnd());
+                sb.Append((line[..start] + " " + line[tokenEnd..]).TrimEnd());
                 sb.Append('\n');
                 i++;
                 if (delim is not null)
@@ -308,21 +310,30 @@ public abstract class IntentAnalyzerBase : IIntentAnalyzer
         return null;
     }
 
-    /// <summary>读 here 文档定界符(可带引号)。</summary>
-    private static string? ReadHeredocDelimiter(string line, int from)
+    /// <summary>读 here 文档定界符(可带引号与 &lt;&lt;- 的连字符):返回(定界符, 操作符行上标记的结束下标)。
+    /// 结束下标供调用方拼接操作符行剩余部分(定界符之后的 ; &amp;&amp; 等命令仍需进入分析)。</summary>
+    private static (string? Delim, int TokenEnd) ReadHeredocDelimiter(string line, int from)
     {
         var j = from;
+        if (j < line.Length && line[j] == '-')
+            j++; // <<- 的连字符属于操作符
         while (j < line.Length && char.IsWhiteSpace(line[j]))
             j++;
+        var openedQuote = false;
         if (j < line.Length && (line[j] == '\'' || line[j] == '"'))
+        {
+            openedQuote = true;
             j++;
+        }
         var w = new System.Text.StringBuilder();
         while (j < line.Length && (char.IsLetterOrDigit(line[j]) || line[j] == '_'))
         {
             w.Append(line[j]);
             j++;
         }
-        return w.Length > 0 ? w.ToString() : null;
+        if (openedQuote && j < line.Length && (line[j] == '\'' || line[j] == '"'))
+            j++; // 收尾引号属于定界符标记
+        return (w.Length > 0 ? w.ToString() : null, j);
     }
 
     /// <summary>按命令词+参数定类:在词表基础上特判 find——无写动作标志时按只读处理

@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.RegularExpressions;
 using APet.Framework.LLM;
 using APet.Framework.Models;
 using APet.Framework.Plugin;
@@ -113,7 +111,7 @@ public sealed class ChatBubblePlugin : AgentPluginBase
     public event Action? OpenChatRequested;
 
     private readonly IPetAnchor _pet;
-    private readonly StringBuilder _raw = new(); // 本轮完整文本(含情绪 tag,未剥离)
+    private EmotionTagStream? _display; // 本轮流式剥离器:增量剥 tag + 扣留半个 tag,产出即气泡显示文本
 
     private BubbleForm? _form;
     private System.Windows.Forms.Timer? _hideTimer;
@@ -235,8 +233,8 @@ public sealed class ChatBubblePlugin : AgentPluginBase
     /// <summary>新一轮运行开始:清掉上一轮残留(异常中断时可能没走到 Finished),气泡立即收起。</summary>
     public override Task OnBeforeRunAsync(AgentClass agent, AgentSession session, List<ChatMessage> messages)
     {
-        _raw.Clear();
-        _finishedPending = false; // 立即收起不受悬停影响
+        _display = null; // 立即收起不受悬停影响
+        _finishedPending = false;
         _hideTimer?.Stop();
         _form?.StartHide();
         return Task.CompletedTask;
@@ -247,23 +245,23 @@ public sealed class ChatBubblePlugin : AgentPluginBase
         switch (delta.Kind)
         {
             case StreamDeltaKind.Content:
-                _raw.Append(delta.Text);
-                RefreshBubble();
+                // 增量剥离(每增量只处理新增量):产出即显示文本,完整 tag 剥除、半个 tag 扣住不闪现
+                RefreshBubble((_display ??= new EmotionTagStream(_pet.TagStyle)).Append(delta.Text));
                 _hideTimer?.Stop(); // 新内容到来:取消待定的自动隐藏
                 break;
 
             case StreamDeltaKind.Finished when delta.SourceEvent is FinishedEvent { Reason: FinishReason.ToolCalls }:
                 // 工具调用轮:过渡文本不保留,立即收起(工具执行期间气泡不显示);立即收起不受悬停影响
-                _raw.Clear();
+                _display = null;
                 _finishedPending = false;
                 _hideTimer?.Stop();
                 _form?.StartHide();
                 break;
 
             case StreamDeltaKind.Finished:
-                // 对话结束:清缓冲(窗体保留最后文本继续展示),停留片刻后渐变隐藏;悬停气泡可挂起倒计时;
-                // TTS 朗读期间不启动倒计时(气泡保持到朗读结束,由宿主经 OnTtsIdle 唤起)
-                _raw.Clear();
+                // 对话结束:轮次状态清空(窗体保留最后文本继续展示),停留片刻后渐变隐藏;
+                // 悬停气泡可挂起倒计时;TTS 朗读期间不启动倒计时(气泡保持到朗读结束,由宿主经 OnTtsIdle 唤起)
+                _display = null;
                 _finishedPending = true;
                 if (!TtsStillSpeaking)
                     StartHideCountdown();
@@ -294,13 +292,12 @@ public sealed class ChatBubblePlugin : AgentPluginBase
 
     // ───────── 气泡刷新 ─────────
 
-    private void RefreshBubble()
+    private void RefreshBubble(string text)
     {
         var petBounds = _pet.WindowBounds;
         if (petBounds.IsEmpty)
             return; // 宠物窗口未显示(未加载/已禁用):无锚点,不显示气泡
 
-        var text = DisplayText(_raw.ToString());
         if (text.Length == 0)
             return; // 本轮目前只有 tag 或空白:暂不显示
 
@@ -333,29 +330,6 @@ public sealed class ChatBubblePlugin : AgentPluginBase
     private static bool IsStyleSetting(string name) =>
         name is "fontFamily" or "fontSize" or "fontStyle" or "textColor" or "fillColor" or "borderColor"
             or "borderWidth" or "cornerRadius" or "tailLength" or "maxWidth" or "opacityPercent";
-
-    /// <summary>剥离完整情绪 tag、扣留尾部未收完的半个 tag(与 TTS 解析同规则),超长时保留最新内容。</summary>
-    private string DisplayText(string raw)
-    {
-        var spoken = new StringBuilder();
-        var pos = 0;
-        foreach (Match m in TagRegex().Matches(raw))
-        {
-            spoken.Append(raw, pos, m.Index - pos);
-            pos = m.Index + m.Length;
-        }
-
-        var tail = raw[pos..];
-        int hold = EmotionTagCodec.IndexOfPartialTag(tail);
-        if (hold >= 0)
-            tail = tail[..hold]; // 半个 tag 先扣住,收完后再整体剥离
-        spoken.Append(tail);
-
-        return spoken.ToString().Trim();
-    }
-
-    /// <summary>情绪 tag 正则:括号风格取自桌宠插件(未接线时按方括号),与 TTS 保持一致(统一在 EmotionTagCodec)。</summary>
-    private Regex TagRegex() => EmotionTagCodec.CreateRegex(_pet.TagStyle);
 
     private BubbleForm EnsureForm()
     {

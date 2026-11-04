@@ -158,7 +158,7 @@ public sealed class SubAgentPlugin : AgentPluginBase
                     tool.Enabled = false; // 未勾选的工具不暴露给子代理(apply_patch 等同样禁用)
 
             // 运行路径只经 session.LlmClient 发消息(模型/地址在连接实例里),AgentOptions.Llm 仅 CreateSession 用
-            // 安全策略克隆自主会话(工作目录/白名单/其他目录级别随 sub_run 继承),
+            // 安全策略克隆自主会话(工作目录/白名单随 sub_run 继承),
             // 但工作目录权限改用子代理自身设定(默认只读)——绝不回写主会话的策略对象
             var sec = policy is null
                 ? new AgentSecurityPolicy()
@@ -169,7 +169,6 @@ public sealed class SubAgentPlugin : AgentPluginBase
                     AllowedTools = policy.AllowedTools,
                     WorkingDirectory = policy.WorkingDirectory,
                     WorkingDirectoryAccess = policy.WorkingDirectoryAccess,
-                    OtherDirectoriesAccess = policy.OtherDirectoriesAccess,
                 };
             if (policy is not null)
                 foreach (var rule in policy.WhitelistedDirectories)

@@ -398,6 +398,16 @@ public sealed class BashIntentAnalyzer : IntentAnalyzerBase
                 continue;
             }
 
+            if (c is '\n' or '\r')
+            {
+                // 换行与 ; 同等切段:多行命令逐行独立定类。此前按空白吞掉,第二行会并入
+                // 第一行整段定类(第二行免鉴权);heredoc 正文已先行剥离,不受影响
+                FlushOp();
+                FlushWord();
+                toks.Add(new Tok { Text = "\n", Kind = TokKind.Chain });
+                continue;
+            }
+
             if (char.IsWhiteSpace(c))
             {
                 FlushOp();

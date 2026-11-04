@@ -103,6 +103,8 @@ public static class WebEventHub
         {
             authId = id,
             detail = card.Detail,
+            reason = card.Reason,
+            command = card.Command,
             trustDirs = card.TrustDirs,
         });
         return id;

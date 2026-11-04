@@ -4,7 +4,8 @@ namespace APet.Framework.Security;
 /// 单个 Agent 的安全鉴权策略(每个 Agent 各持有一份,互不影响)。
 /// 策略只做放行判定,自身没有"直接拒绝"的黑名单动作:
 /// 未满足鉴权的调用(如只读目录写入、效果未知的调用)一律交由宿主回调处理,回调默认拒绝。
-/// 目录判定优先级:白名单 &gt; 工作目录 &gt; 其他目录默认级别。
+/// 判定优先级:白名单 &gt; 工作目录档位;工作目录之外的路径固定按只读判(写/未知效果弹卡),
+/// 完全访问档全放行,全部询问档全弹。
 /// </summary>
 public sealed class AgentSecurityPolicy
 {
@@ -20,14 +21,11 @@ public sealed class AgentSecurityPolicy
     /// </summary>
     public IReadOnlySet<string>? AllowedTools { get; set; }
 
-    /// <summary>Agent 的工作目录。为空时所有路径都落入"其他目录"的默认级别。</summary>
+    /// <summary>Agent 的工作目录。为空时所有路径都按目录外(只读)判。</summary>
     public string? WorkingDirectory { get; set; }
 
-    /// <summary>工作目录内的授权级别,默认读写。</summary>
+    /// <summary>全局权限档:工作目录内按此级别;目录外只读;终端命令的行为档位亦由此决定。默认读写。</summary>
     public DirectoryAccess WorkingDirectoryAccess { get; set; } = DirectoryAccess.ReadWrite;
-
-    /// <summary>其他目录(且不在白名单内)的授权级别,默认只读。</summary>
-    public DirectoryAccess OtherDirectoriesAccess { get; set; } = DirectoryAccess.ReadOnly;
 
     /// <summary>白名单目录,优先级最高,内含路径任何操作都放行。可随意添加。</summary>
     public List<DirectoryRule> WhitelistedDirectories { get; } = new();

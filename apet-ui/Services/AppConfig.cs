@@ -504,9 +504,6 @@ public sealed class SecurityConfig
     /// <summary>默认工作目录权限:ReadOnly / ReadWrite / FullAccess / Ask(新建会话随目录一并继承)。</summary>
     public string DefaultWorkingDirectoryAccess { get; set; } = "ReadWrite";
 
-    /// <summary>其他目录权限:ReadOnly / ReadWrite / FullAccess。</summary>
-    public string OtherDirectoriesAccess { get; set; } = "ReadOnly";
-
     /// <summary>白名单目录列表(任何操作都放行)。</summary>
     public List<string> Whitelist { get; set; } = new();
 }
@@ -1040,13 +1037,10 @@ public sealed class UiConfig
         }
     }
 
-    /// <summary>把 SecurityConfig 构建为框架安全策略。</summary>
+    /// <summary>把 SecurityConfig 构建为框架安全策略(白名单载体;档位在会话运行时按会话设定)。</summary>
     public static AgentSecurityPolicy BuildSecurity(SecurityConfig cfg)
     {
-        var policy = new AgentSecurityPolicy
-        {
-            OtherDirectoriesAccess = ParseAccess(cfg.OtherDirectoriesAccess, DirectoryAccess.ReadOnly),
-        };
+        var policy = new AgentSecurityPolicy();
         foreach (var dir in cfg.Whitelist)
         {
             if (!string.IsNullOrWhiteSpace(dir))
@@ -1054,7 +1048,4 @@ public sealed class UiConfig
         }
         return policy;
     }
-
-    private static DirectoryAccess ParseAccess(string value, DirectoryAccess fallback) =>
-        Enum.TryParse<DirectoryAccess>(value, ignoreCase: true, out var parsed) ? parsed : fallback;
 }

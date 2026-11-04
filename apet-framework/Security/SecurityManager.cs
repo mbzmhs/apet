@@ -98,35 +98,31 @@ public sealed class SecurityManager : ISecurityChecker
 
         var toolKey = toolName is null ? null : ToolPermission.GetKey(toolName);
 
+        // 终端命令不做逐路径 ACL:三套仿真解析器的失败模式必须是"弹窗"而非"放行",
+        // 故裁决只认三类可靠结论(只读正清单/灾难清单/写入范围),其余一律交宿主回调。
+        // 档位语义:ReadOnly=仅只读;ReadWrite=追加"写工作目录";FullAccess=全放行;Ask=全部确认。
+        if (toolKey == "terminal")
+            return CheckTerminal(policy, effect);
+
         // 规则匹配:路径在目录内,且规则未限定工具(或与当前工具的权限类别一致)
-        bool InWhitelist(string path) => policy.WhitelistedDirectories.Any(r =>
-            PathScope.Contains(r.Path, path)
-            && (string.IsNullOrEmpty(r.Tool) || (toolKey is not null && r.Tool == toolKey)));
+        bool InWhitelist(string path) => InWhitelistedDirectory(policy, path, toolKey);
 
         if (effect.Access == FileAccessKind.None)
             return AuthorizationResult.Allow;
 
-        // 白名单最高优先级:所有已知路径都落在白名单内时,任何操作(含效果未知)都放行
+        // 单一档位语义:完全访问 = 文件工具全放行(含目录外与效果未知);全部询问 = 文件工具全弹
+        if (policy.WorkingDirectoryAccess == DirectoryAccess.FullAccess)
+            return AuthorizationResult.Allow;
+        if (policy.WorkingDirectoryAccess == DirectoryAccess.Ask)
+            return AuthorizationResult.Deny("当前权限档为「全部询问」,所有工具调用需逐次确认");
+
+        // 白名单次之:所有已知路径都落在白名单内时,任何操作(含效果未知)都放行
         if (effect.Paths.Count > 0 && effect.Paths.All(InWhitelist))
             return AuthorizationResult.Allow;
 
-        // 效果未知无法按读写种类判定:只有完全访问级别声称覆盖效果未知的调用
-        // (DirectoryAccess.FullAccess 的语义即"任何操作都放行,含效果未知的调用"——如终端命令)。
-        // 路径为空 = 命令未显式触碰任何路径(如 ping):shell 类调用以工作目录为基准运行,
-        // 按"范围=工作目录"判定——工作目录为完全访问时自动放行,否则交宿主回调。
-        // 有路径时逐条按归属解析(白名单 > 工作目录级别 > 其他目录级别,与下方已知读写同规则),
-        // 全部为完全访问才放行:此前只看工作目录,全局"其他目录=完全访问"救不了
-        // 命令中出现的工作目录外路径(python 参数里的绝对路径、cd 别处后的兜底 CWD 等),必弹鉴权。
+        // 效果未知无法按读写种类判定:未命中白名单/完全访问档时一律弹卡(fail-closed)
         if (effect.Access == FileAccessKind.Unknown)
-        {
-            var trusted = effect.Paths.Count > 0
-                ? effect.Paths.All(p => InWhitelist(p) || ResolveAccess(policy, p) == DirectoryAccess.FullAccess)
-                : !string.IsNullOrEmpty(policy.WorkingDirectory)
-                    && policy.WorkingDirectoryAccess == DirectoryAccess.FullAccess;
-            return trusted
-                ? AuthorizationResult.Allow
-                : AuthorizationResult.Deny("the effect of this call could not be determined (unknown) and requires host approval");
-        }
+            return AuthorizationResult.Deny("the effect of this call could not be determined (unknown) and requires host approval");
 
         foreach (var path in effect.Paths)
         {
@@ -150,8 +146,46 @@ public sealed class SecurityManager : ISecurityChecker
         return AuthorizationResult.Allow;
     }
 
+    /// <summary>路径归属解析:工作目录内按档位;目录外固定按只读判(写/未知效果弹卡),白名单已在上方先行放行。</summary>
     private static DirectoryAccess ResolveAccess(AgentSecurityPolicy policy, string path) =>
         !string.IsNullOrEmpty(policy.WorkingDirectory) && PathScope.Contains(policy.WorkingDirectory, path)
             ? policy.WorkingDirectoryAccess
-            : policy.OtherDirectoriesAccess;
+            : DirectoryAccess.ReadOnly;
+
+    /// <summary>终端命令裁决:档位取工作目录权限,四档语义——
+    /// 只读=仅放行只读正清单,写/未知弹卡;读写=除灾难清单外静默执行;
+    /// 完全访问=全放行;全部询问=全弹。白名单保留为只读档的逃生门。</summary>
+    private static AuthorizationResult CheckTerminal(AgentSecurityPolicy policy, ToolEffect effect)
+    {
+        var tier = policy.WorkingDirectoryAccess;
+
+        // 灾难清单命中:任何非完全访问档位都逐次确认,白名单也不豁免
+        if (effect.Dangerous && tier != DirectoryAccess.FullAccess)
+            return AuthorizationResult.Deny("危险命令(递归删除/格式化/强推等),需逐次确认");
+
+        if (tier == DirectoryAccess.FullAccess)
+            return AuthorizationResult.Allow;
+
+        if (tier == DirectoryAccess.Ask)
+            return AuthorizationResult.Deny("当前权限档为「全部询问」,所有终端命令需逐次确认");
+
+        // 逃生门:确认卡片"信任此目录"写入的白名单,命令涉及的全部路径都落在信任范围内时放行
+        if (effect.Paths.Count > 0 && effect.Paths.All(p => InWhitelistedDirectory(policy, p, "terminal")))
+            return AuthorizationResult.Allow;
+
+        // 只读档:只读正清单(静态可靠)放行,写入与未知效果一律弹卡
+        if (tier == DirectoryAccess.ReadOnly)
+            return effect.Access is FileAccessKind.Read or FileAccessKind.None
+                ? AuthorizationResult.Allow
+                : AuthorizationResult.Deny("只读档下终端仅放行只读命令,写入与未知效果需确认");
+
+        // 读写档:灾难清单已在最前拦截,其余命令(含未知效果、目录外写)静默执行
+        return AuthorizationResult.Allow;
+    }
+
+    /// <summary>白名单匹配:路径在规则目录内,且规则未限定工具(或与当前工具权限类别一致)。</summary>
+    private static bool InWhitelistedDirectory(AgentSecurityPolicy policy, string path, string? toolKey) =>
+        policy.WhitelistedDirectories.Any(r =>
+            PathScope.Contains(r.Path, path)
+            && (string.IsNullOrEmpty(r.Tool) || (toolKey is not null && r.Tool == toolKey)));
 }

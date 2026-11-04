@@ -141,7 +141,7 @@ public static class SessionSnapshot
             t.IsRunning, t.IsError, t.ResultSummary, t.PathLink, t.StatAdd, t.StatDel,
             [.. t.DiffLines.Select(d => new DiffLineDto(d.LineNo, d.Text, d.Kind))], [.. t.ImageFiles],
             t.SubRunId, t.SubRunTitle, t.ToolCallId),
-        AuthRequestViewModel a => new AuthStep(a.WebAuthId, a.Detail, [.. a.TrustDirs], a.Decided, a.Granted),
+        AuthRequestViewModel a => new AuthStep(a.WebAuthId, a.Detail, a.Reason, a.Command, [.. a.TrustDirs], a.Decided, a.Granted),
         _ => new UnknownStep(raw.GetType().Name),
     };
 }
@@ -223,7 +223,7 @@ public sealed record ToolStep(
 
 public sealed record DiffLineDto(string LineNo, string Text, string Kind);
 
-public sealed record AuthStep(string? AuthId, string Detail, List<string> TrustDirs, bool Decided, bool Granted) : StepDto("auth");
+public sealed record AuthStep(string? AuthId, string Detail, string? Reason, string? Command, List<string> TrustDirs, bool Decided, bool Granted) : StepDto("auth");
 
 public sealed record UnknownStep(string Name) : StepDto("unknown");
 

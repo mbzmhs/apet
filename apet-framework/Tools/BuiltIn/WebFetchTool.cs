@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -38,6 +39,8 @@ public sealed partial class WebFetchTool : ToolBase
     private const string ChromeUserAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36";
     private const string HonestUserAgent = "APet/1.0 (web_fetch)";
+    /// <summary>3xx 与页面内跳转共用的跳数上限。</summary>
+    private const int MaxRedirects = 8;
     private const string BrowserAccept = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
     private const string BrowserAcceptLanguage = "zh-CN,zh;q=0.9,en;q=0.8";
 
@@ -66,24 +69,68 @@ public sealed partial class WebFetchTool : ToolBase
 
     private HttpClient CreateClient()
     {
-        var handler = new HttpClientHandler
+        var proxyMode = _options.ProxyMode.Trim().ToLowerInvariant();
+        var handler = new SocketsHttpHandler
         {
             AutomaticDecompression = DecompressionMethods.All,
+            // 3xx 由 FetchAsync 手动逐跳跟进:自动跟会绕开每一跳的目标地址校验
+            AllowAutoRedirect = false,
         };
-        switch (_options.ProxyMode.Trim().ToLowerInvariant())
+        var usingProxy = false;
+        switch (proxyMode)
         {
             case "none":
                 handler.UseProxy = false;
                 break;
             case "custom" when Uri.TryCreate(_options.ProxyUrl.Trim(), UriKind.Absolute, out var proxyUri):
                 handler.Proxy = new WebProxy(proxyUri);
-                handler.UseProxy = true;
+                usingProxy = true;
                 break;
             default:
-                break; // system:使用系统代理(HttpClientHandler 默认行为)
+                // system:SocketsHttpHandler 默认不读系统代理(与 HttpClientHandler 不同),须显式接上
+                handler.Proxy = HttpClient.DefaultProxy;
+                // GetProxy 对"无代理"返回目标地址本身,以此探测系统代理是否真实存在
+                var probe = new Uri("http://apet-proxy-probe.invalid/");
+                usingProxy = handler.Proxy.GetProxy(probe) is { } px && px != probe;
+                break;
         }
+        // 无代理直连时在建连点复检目标 IP:把"预检时解析"与"实际建连时解析"之间的
+        // 时间差隧道封死。代理模式连接端点是代理本身、无从校验目标,依赖逐跳预检
+        if (!usingProxy)
+            handler.ConnectCallback = ConnectWithPrivateAddressGuard;
         // 只用于 UA 等默认头;超时按请求用 CancellationToken 控制
         return new HttpClient(handler) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
+    }
+
+    /// <summary>直连建连:先按私网判据复检解析结果,再依序尝试各地址(与系统解析偏好一致)。</summary>
+    private static async ValueTask<Stream> ConnectWithPrivateAddressGuard(
+        SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    {
+        var endPoint = context.DnsEndPoint;
+        var addresses = IPAddress.TryParse(endPoint.Host, out var literal)
+            ? new[] { literal }
+            : await Dns.GetHostAddressesAsync(endPoint.Host, cancellationToken);
+
+        // "任一"解析结果私网即拒:与逐跳预检同一判据,此处封预检后解析漂移的时间差
+        if (addresses.Length == 0 || Array.Exists(addresses, NetworkGuard.IsPrivateIp))
+            throw new HttpRequestException($"blocked target: {endPoint.Host}");
+
+        Exception? lastError = null;
+        foreach (var address in addresses)
+        {
+            var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            try
+            {
+                await socket.ConnectAsync(new IPEndPoint(address, endPoint.Port), cancellationToken);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                socket.Dispose();
+            }
+        }
+        throw new HttpRequestException($"connect failed: {endPoint.Host}:{endPoint.Port}", lastError);
     }
 
     /// <summary>代理设定变化后由宿主调用,下一个请求按新代理建连。
@@ -105,6 +152,7 @@ public sealed partial class WebFetchTool : ToolBase
                 + " pass format=text for plain text or format=html for raw HTML; non-HTML content (JSON etc.) is returned as-is."
                 + " For HTML pages the result also contains a links array (absolute url + text, up to"
                 + $" {WebFetchToolOptions.MaxLinks} entries) so you can fetch linked pages for further exploration."
+                + " Intranet, loopback and link-local targets are rejected (blocked_host)."
                 + $" Timeout: {_options.TimeoutSeconds} seconds. Content is truncated to {_options.MaxCharacters} characters.",
                 """
                 {
@@ -177,8 +225,21 @@ public sealed partial class WebFetchTool : ToolBase
         var redirects = 0;
         var current = uri;
         var challengeRetried = false; // Cloudflare 质询的诚实 UA 重试只做一次
+        var checkedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // 同宿主只检一次
         while (true)
         {
+            // 每跳目标过闸:环回/私网/链路本地一律拒绝(初始 URL、3xx 与页面内跳转共用此入口)
+            if (checkedHosts.Add(current.Host)
+                && await NetworkGuard.IsBlockedTargetAsync(current.Host, timeoutToken))
+            {
+                return JsonSerializer.Serialize(new
+                {
+                    url = current.ToString(),
+                    error = "blocked_host",
+                    hint = "Intranet, loopback or link-local targets are not fetchable.",
+                }, ToolJson.Options);
+            }
+
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
             request.Headers.UserAgent.ParseAdd(challengeRetried ? HonestUserAgent : ChromeUserAgent);
             request.Headers.TryAddWithoutValidation("Accept", BrowserAccept);
@@ -186,8 +247,32 @@ public sealed partial class WebFetchTool : ToolBase
             using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeoutToken);
             status = (int)response.StatusCode;
 
+            // 3xx 手动逐跳跟进:Location 相对地址对当前 URI 解析,每一跳的目标都要过上面的闸
+            if (status is 301 or 302 or 303 or 307 or 308)
+            {
+                var location = response.Headers.Location;
+                if (location is null || redirects >= MaxRedirects)
+                    return JsonSerializer.Serialize(new
+                    {
+                        url = current.ToString(),
+                        error = "http_error",
+                        status,
+                    }, ToolJson.Options);
+                var target = location.IsAbsoluteUri ? location : new Uri(current, location);
+                if (target.Scheme is not ("http" or "https"))
+                    return JsonSerializer.Serialize(new
+                    {
+                        url = current.ToString(),
+                        error = "http_error",
+                        status,
+                    }, ToolJson.Options);
+                current = target;
+                redirects++;
+                continue;
+            }
+
             // Cloudflare 质询页(403 + cf-mitigated: challenge):Chrome UA 配 .NET TLS 指纹可能被识破,
-            // 换诚实 UA 重试一次——反爬对自报家门的客户端更宽容(opencode 同款策略)
+            // 换诚实 UA 重试一次——反爬对自报家门的客户端更宽容(常见反爬应对)
             if (status == 403 && !challengeRetried
                 && response.Headers.TryGetValues("cf-mitigated", out var mitigated)
                 && mitigated.Any(v => v.Equals("challenge", StringComparison.OrdinalIgnoreCase)))
@@ -232,9 +317,9 @@ public sealed partial class WebFetchTool : ToolBase
                 break;
             rawHtml = text;
 
-            // 页面内跳转声明(meta refresh / location.replace 等)存在即跟进(最多 3 跳):
+            // 页面内跳转声明(meta refresh / location.replace 等)存在即跟进(与 3xx 共用跳数预算):
             // Google 等搜索引擎的"即将跳转"提示页常带页脚链接,去标签后仍较长,不能用文本长度设卡
-            if (redirects >= 3
+            if (redirects >= MaxRedirects
                 || !TryGetRedirectTarget(body.ToArray(), charset, response.RequestMessage?.RequestUri ?? current, out var next))
                 break;
             current = next;

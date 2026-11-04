@@ -57,6 +57,7 @@ public sealed class BgRunTool : ToolBase
             {
                 Access = intent.StrongestAccess,
                 Paths = intent.Paths,
+                Dangerous = DangerousCommands.IsInvolved(intent),
             };
         }
         catch (JsonException)

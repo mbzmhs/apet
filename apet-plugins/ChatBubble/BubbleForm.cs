@@ -336,11 +336,14 @@ public sealed class BubbleForm : Form
         return Math.Clamp(Math.Min(_style.CornerRadius, limit), 0, _style.CornerRadius);
     }
 
-    /// <summary>把窗口 Region 设为气泡形状(含尾巴),形状外透明且不可点击。</summary>
+    /// <summary>把窗口 Region 设为气泡形状(含尾巴),形状外透明且不可点击。
+    /// 赋值不会释放旧 Region(GDI 句柄),流式期间每次重排都会走到这里,须显式归还。</summary>
     private void ApplyShape()
     {
         using var path = BuildPath(Width, Height, _tailDir, _tailAnchor);
+        var old = Region;
         Region = new Region(path);
+        old?.Dispose();
         Invalidate();
     }
 

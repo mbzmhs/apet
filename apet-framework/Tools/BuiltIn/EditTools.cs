@@ -57,7 +57,7 @@ internal static class EditToolHelpers
 }
 
 /// <summary>
-/// 精确字符串替换编辑(参考 opencode 的 edit 工具):
+/// 精确字符串替换编辑:
 /// 读取文件后把 old_string 替换为 new_string,默认要求唯一匹配,可设 replace_all。
 /// </summary>
 public sealed class EditFileTool : BuiltinToolBase
@@ -139,7 +139,7 @@ public sealed class EditFileTool : BuiltinToolBase
 }
 
 /// <summary>
-/// 应用 unified diff 补丁(参考 opencode 的 patch 工具):
+/// 应用 unified diff 补丁:
 /// 解析 @@ -l,c +l,c @@ 风格的 hunk,按上下文匹配后应用增删改。
 /// </summary>
 public sealed partial class ApplyPatchTool : BuiltinToolBase

@@ -215,14 +215,22 @@ public sealed class AuthRequestViewModel : ObservableObject
     private bool _decided;
     private bool _granted;
 
-    public AuthRequestViewModel(string detail, TaskCompletionSource<bool> tcs)
+    public AuthRequestViewModel(string detail, string? reason, string? command, TaskCompletionSource<bool> tcs)
     {
         Detail = detail;
+        Reason = reason;
+        Command = command;
         _tcs = tcs;
     }
 
     /// <summary>鉴权描述(工具可读名/参数摘要/影响范围)。</summary>
     public string Detail { get; }
+
+    /// <summary>需要确认的原因一行(档位/灾难判定的中文说明;文件类工具为 null,沿用详情布局)。</summary>
+    public string? Reason { get; }
+
+    /// <summary>终端命令原文(Web 卡片以代码块完整展示;文件类工具为 null)。</summary>
+    public string? Command { get; }
 
     /// <summary>可信任的候选目录(受影响路径所在的文件夹)。</summary>
     public IReadOnlyList<string> TrustDirs { get; init; } = Array.Empty<string>();
@@ -481,9 +489,10 @@ public sealed class ChatMessageViewModel : ObservableObject
     }
 
     /// <summary>加入一张鉴权确认卡片,返回卡片供更新。</summary>
-    public AuthRequestViewModel AddAuthRequest(string detail, IReadOnlyList<string> trustDirs, TaskCompletionSource<bool> tcs)
+    public AuthRequestViewModel AddAuthRequest(string detail, string? reason, string? command,
+        IReadOnlyList<string> trustDirs, TaskCompletionSource<bool> tcs)
     {
-        var card = new AuthRequestViewModel(detail, tcs) { TrustDirs = trustDirs };
+        var card = new AuthRequestViewModel(detail, reason, command, tcs) { TrustDirs = trustDirs };
         Steps.Add(card);
         return card;
     }

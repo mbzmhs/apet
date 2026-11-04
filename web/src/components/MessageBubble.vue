@@ -772,8 +772,11 @@ function imgSrc(file: string) {
       <!-- 鉴权卡:未决 = 卡片 + 按钮;拒绝 = 弱化结果行;允许后整卡隐藏(同桌面端) -->
       <div v-else-if="s.kind === 'auth' && !((s as any).decided && (s as any).granted)" class="auth" :class="{ decided: (s as any).decided }">
         <template v-if="!(s as any).decided">
-          <div class="auth-head"><span class="auth-shield ms">gpp_maybe</span><span class="auth-title">权限确认</span></div>
-      <div class="auth-detail" data-copy>{{ (s as any).detail }}</div>
+          <div class="auth-head"><span class="auth-shield ms">gpp_maybe</span><span class="auth-title">需要权限</span></div>
+          <div v-if="(s as any).reason" class="auth-reason">{{ (s as any).reason }}</div>
+          <!-- 终端命令原文:等宽代码块完整展示,超高可滚动(不截断、无折叠状态) -->
+          <div v-if="(s as any).command" class="auth-cmd" data-copy><span class="auth-cmd-prompt">$ </span>{{ (s as any).command }}</div>
+          <div v-else class="auth-detail" data-copy>{{ (s as any).detail }}</div>
           <div class="auth-actions">
             <button class="ghost" @click="emit('auth', s, true, false)">允许</button>
             <button v-if="(s as any).trustDirs?.length" class="ghost" @click="emit('auth', s, true, true)">信任此目录</button>
@@ -1488,6 +1491,37 @@ function imgSrc(file: string) {
   font-size: 13.2px;
   margin-top: 6px;
   color: var(--fg-primary);
+}
+
+/* 原因一行:档位/灾难判定的中文说明(来自 CheckTerminal 的 Deny 理由) */
+.auth-reason {
+  margin-top: 6px;
+  font-size: 12.6px;
+  color: var(--fg-secondary);
+}
+
+/* 终端命令原文:等宽代码块,pre-wrap 完整展示;超高改滚动(不截断、无折叠状态) */
+.auth-cmd {
+  margin-top: 7px;
+  padding: 8px 10px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12.3px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--fg-primary);
+  user-select: text;
+  /* 整行倍数裁切:行高取整,上限按行数计,边界不出现半行 */
+  max-height: calc(19px * 7);
+  overflow-y: auto;
+}
+
+.auth-cmd-prompt {
+  color: var(--fg-dim);
+  user-select: none;
 }
 
 .auth-actions {

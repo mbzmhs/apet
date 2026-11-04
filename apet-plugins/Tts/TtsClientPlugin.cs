@@ -302,7 +302,8 @@ public sealed class TtsClientPlugin : AgentPluginBase
         }
 
         var tail = raw[pos..];
-        var holdIndex = EmotionTagCodec.IndexOfPartialTag(tail);
+        var (holdOpen, holdClose) = EmotionTagCodec.Wrapper(TagStyleProvider?.Invoke() ?? PetTagStyle.SquareBrackets);
+        var holdIndex = EmotionTagCodec.IndexOfPartialTag(tail, holdOpen, holdClose);
         if (holdIndex >= 0)
         {
             spoken.Append(tail, 0, holdIndex);

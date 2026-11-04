@@ -387,6 +387,15 @@ public sealed class CmdIntentAnalyzer : IntentAnalyzerBase
                 continue;
             }
 
+            // 换行与分隔符同等:多行命令逐行独立定类(按空白吞掉会让第二行并入第一行整段定类)
+            if (!inQuote && c is '\n' or '\r')
+            {
+                FlushOp();
+                FlushWord();
+                toks.Add(new Tok { Text = "\n", Kind = TokKind.Separator });
+                continue;
+            }
+
             if (!inQuote && char.IsWhiteSpace(c))
             {
                 FlushOp();

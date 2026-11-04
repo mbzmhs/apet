@@ -11,6 +11,9 @@ public sealed record ToolEffect
     /// <summary>受影响的路径(绝对路径)。</summary>
     public IReadOnlyList<string> Paths { get; init; } = Array.Empty<string>();
 
+    /// <summary>终端命令命中灾难清单(递归批量删除/格式化/强推等),任何非完全访问档位都逐次确认。</summary>
+    public bool Dangerous { get; init; }
+
     /// <summary>无文件系统影响。</summary>
     public static ToolEffect NoEffect { get; } = new() { Access = FileAccessKind.None };
 

@@ -141,12 +141,26 @@ public sealed class Agent
             throw new ArgumentException("userInput, imageAttachments and extraTextParts must not all be empty.", nameof(userInput));
 
         var runToken = session.BeginRun(cancellationToken); // 请求锁:同会话未结束前再次请求直接拒绝
-        var working = BuildWorkingMessages(session, userInput, images, extraTexts,
-            preQueuedMessages?.ToList(), out var inputMessage, out var firstQueued);
-        if (clientId is not null)
-            inputMessage.ClientId = clientId; // 宿主标识随本轮写回 Session:/undo 据此与 display 气泡精确匹配
-        inputMessage.Id = clientId ?? Guid.NewGuid().ToString("N"); // 消息 id 随会话文件落盘:用户消息复用宿主标识(与 display 气泡同一 Id)
-        inputMessage.TimeCreated = DateTime.Now;
+        List<ChatMessage> working;
+        ChatMessage inputMessage;
+        ChatMessage? firstQueued;
+        try
+        {
+            working = BuildWorkingMessages(session, userInput, images, extraTexts,
+                preQueuedMessages?.ToList(), out inputMessage, out firstQueued);
+            if (clientId is not null)
+                inputMessage.ClientId = clientId; // 宿主标识随本轮写回 Session:/undo 据此与 display 气泡精确匹配
+            inputMessage.Id = clientId ?? Guid.NewGuid().ToString("N"); // 消息 id 随会话文件落盘:用户消息复用宿主标识(与 display 气泡同一 Id)
+            inputMessage.TimeCreated = DateTime.Now;
+        }
+        catch
+        {
+            // 组装期失败(含队列排空等宿主事件回调抛出):必须释放请求锁再上抛——
+            // 此处位于主 try 之外,main finally 的 EndRun 不会执行,漏放则 IsRunning 永久为真,
+            // 会话此后每次请求都被 "already has a request in flight" 拒绝,只能重启
+            session.EndRun();
+            throw;
+        }
 
         // 增量写回状态(声明在 try 外,中断/异常路径也能补写):每轮迭代完成即把"助手与工具结果成对"的消息
         // 写回会话,长任务被打断或异常时已完成部分不丢;未完成迭代不成对,不写,避免孤儿 tool_calls 污染上下文。
@@ -628,7 +642,7 @@ public sealed class Agent
         }
     }
 
-    /// <summary>结束原因 → 落盘形态(与 OpenCode 等主流约定一致的下划线命名)。</summary>
+    /// <summary>结束原因 → 落盘形态(主流约定的下划线命名)。</summary>
     private static string? FinishWireName(FinishReason? reason) => reason switch
     {
         FinishReason.Stop => "stop",
