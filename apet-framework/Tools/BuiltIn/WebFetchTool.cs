@@ -167,7 +167,8 @@ public sealed partial class WebFetchTool : ToolBase
                 + " For HTML pages the result also contains a links array (absolute url + text, up to"
                 + $" {WebFetchToolOptions.MaxLinks} entries) so you can fetch linked pages for further exploration."
                 + " Intranet, loopback and link-local targets are rejected (blocked_host)."
-                + $" Timeout: {_options.TimeoutSeconds} seconds. Content is truncated to {_options.MaxCharacters} characters;"
+                + $" Timeout: {_options.TimeoutSeconds} seconds. Content is truncated to {_options.MaxCharacters} characters"
+                + " (pass max_chars to widen the viewport for one call, up to 100000 characters);"
                 + " when truncated, the complete content is also saved to content_path (read it with read_file offset/limit),"
                 + " and content_size reports the full length.",
                 """
@@ -175,7 +176,8 @@ public sealed partial class WebFetchTool : ToolBase
                   "type": "object",
                   "properties": {
                     "url": { "type": "string", "description": "The http(s) URL to fetch" },
-                    "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Output format for HTML pages; markdown (default) preserves document structure" }
+                    "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Output format for HTML pages; markdown (default) preserves document structure" },
+                    "max_chars": { "type": "integer", "description": "Per-call inline content limit (1000-100000). Default: server-configured viewport. Overflow is still saved to content_path." }
                   },
                   "required": ["url"]
                 }
@@ -191,15 +193,25 @@ public sealed partial class WebFetchTool : ToolBase
     public override async Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
     {
         string url, format;
+        int maxChars;
         try
         {
             using var doc = JsonDocument.Parse(argumentsJson);
             url = doc.RootElement.GetProperty("url").GetString() ?? "";
             format = doc.RootElement.TryGetProperty("format", out var f) ? f.GetString() ?? "" : "markdown";
+            // 单次视口放宽:模型对中等长度文档可直接申请更大上限,省掉落盘往返;
+            // 钳制在 [1000, 100_000],防异常取值把上下文撑爆
+            maxChars = doc.RootElement.TryGetProperty("max_chars", out var mc)
+                ? WebFetchContent.ClampViewport(mc.GetInt32())
+                : _options.MaxCharacters;
         }
         catch (JsonException ex)
         {
             throw new ArgumentException("Invalid arguments JSON: " + ex.Message);
+        }
+        catch (FormatException ex)
+        {
+            throw new ArgumentException("max_chars must be an integer: " + ex.Message);
         }
         if (string.IsNullOrWhiteSpace(url))
             throw new ArgumentException("Url must not be empty.");
@@ -215,7 +227,7 @@ public sealed partial class WebFetchTool : ToolBase
 
         try
         {
-            return await FetchAsync(uri, format, timeoutCts.Token);
+            return await FetchAsync(uri, format, maxChars, timeoutCts.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -231,7 +243,7 @@ public sealed partial class WebFetchTool : ToolBase
         }
     }
 
-    private async Task<string> FetchAsync(Uri uri, string format, CancellationToken timeoutToken)
+    private async Task<string> FetchAsync(Uri uri, string format, int maxChars, CancellationToken timeoutToken)
     {
         // 循环抓取:HTML 里的 meta refresh / JS 跳转(如 Google 搜索的提示页)自动跟进目标地址
         string text;
@@ -355,7 +367,7 @@ public sealed partial class WebFetchTool : ToolBase
 
         // 视口截断 + 溢出落盘:前 N 字符照旧内联返回,完整内容落固定缓存目录供 read_file 续读——
         // "截断是门不是墙":此前超出部分直接丢弃,模型只能整页重拉(bash+curl)再提取
-        truncated = text.Length > _options.MaxCharacters;
+        truncated = text.Length > maxChars;
         string contentPath;
         long contentSize;
         var fileTruncated = false;
@@ -384,7 +396,7 @@ public sealed partial class WebFetchTool : ToolBase
             ["contentType"] = contentType,
             ["redirects"] = redirects,
             ["truncated"] = truncated,
-            ["content"] = truncated ? text[.._options.MaxCharacters] : text,
+            ["content"] = truncated ? text[..maxChars] : text,
         };
         if (truncated)
         {
