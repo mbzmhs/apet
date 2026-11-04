@@ -53,6 +53,104 @@ public static partial class WebFetchContent
         return (full, text.Length, fileTruncated);
     }
 
+    /// <summary>JSON 响应结构摘要(确定性生成,不引入 LLM):数组给 length + 对象项的 key 并集,
+    /// 对象给各 key 的类型/长度(数组再展开一层 item_keys,共两层)。解析失败/超大/非 JSON 返回 null。</summary>
+    public static Dictionary<string, object?>? TryBuildJsonShape(string text, string contentType)
+    {
+        var trimmed = text.TrimStart();
+        var looksJson = contentType.Contains("json", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith('{') || trimmed.StartsWith('[');
+        if (!looksJson || text.Length > 1_000_000)
+            return null;
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(text);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+        using (doc)
+        {
+            return doc.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array => ArrayShape(doc.RootElement),
+                JsonValueKind.Object => ObjectShape(doc.RootElement),
+                _ => null,
+            };
+        }
+    }
+
+    private static Dictionary<string, object?> ArrayShape(JsonElement array)
+    {
+        var keys = new SortedSet<string>(StringComparer.Ordinal);
+        string? nonObjectItemType = null;
+        var scanned = 0;
+        foreach (var item in array.EnumerateArray())
+        {
+            if (++scanned > 1000)
+                break;
+            if (item.ValueKind == JsonValueKind.Object)
+                foreach (var p in item.EnumerateObject())
+                    if (keys.Add(p.Name) && keys.Count >= 30)
+                        break;
+            else if (nonObjectItemType is null && item.ValueKind is not (JsonValueKind.Object or JsonValueKind.Array))
+                nonObjectItemType = item.ValueKind.ToString().ToLowerInvariant();
+            if (keys.Count >= 30)
+                break;
+        }
+        var shape = new Dictionary<string, object?>
+        {
+            ["type"] = "array",
+            ["length"] = array.GetArrayLength(),
+        };
+        if (keys.Count > 0)
+            shape["item_keys"] = keys.ToList();
+        else if (nonObjectItemType is not null)
+            shape["item_type"] = nonObjectItemType;
+        return shape;
+    }
+
+    private static Dictionary<string, object?> ObjectShape(JsonElement obj)
+    {
+        var keys = new List<object?>();
+        foreach (var p in obj.EnumerateObject())
+        {
+            if (keys.Count >= 30)
+                break;
+            var entry = new Dictionary<string, object?> { ["name"] = p.Name };
+            switch (p.Value.ValueKind)
+            {
+                case JsonValueKind.Array:
+                    entry["type"] = "array";
+                    entry["length"] = p.Value.GetArrayLength();
+                    var itemKeys = new SortedSet<string>(StringComparer.Ordinal);
+                    foreach (var item in p.Value.EnumerateArray())
+                    {
+                        if (item.ValueKind != JsonValueKind.Object)
+                            continue;
+                        foreach (var ip in item.EnumerateObject())
+                            itemKeys.Add(ip.Name);
+                        if (itemKeys.Count >= 30)
+                            break;
+                    }
+                    if (itemKeys.Count > 0)
+                        entry["item_keys"] = itemKeys.ToList();
+                    break;
+                case JsonValueKind.Object:
+                    entry["type"] = "object";
+                    entry["length"] = p.Value.EnumerateObject().Count();
+                    break;
+                default:
+                    entry["type"] = p.Value.ValueKind.ToString().ToLowerInvariant();
+                    break;
+            }
+            keys.Add(entry);
+        }
+        return new Dictionary<string, object?> { ["type"] = "object", ["keys"] = keys };
+    }
+
     /// <summary>清理过期落盘文件(默认保留 7 天);目录不存在或单个删除失败均静默跳过。</summary>
     public static void CleanupOldFiles(string directory, TimeSpan maxAge)
     {

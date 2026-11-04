@@ -170,7 +170,8 @@ public sealed partial class WebFetchTool : ToolBase
                 + $" Timeout: {_options.TimeoutSeconds} seconds. Content is truncated to {_options.MaxCharacters} characters"
                 + " (pass max_chars to widen the viewport for one call, up to 100000 characters);"
                 + " when truncated, the complete content is also saved to content_path (read it with read_file offset/limit),"
-                + " and content_size reports the full length.",
+                + " and content_size reports the full length."
+                + " JSON responses include a deterministic shape summary (type/length/item_keys, two levels deep)",
                 """
                 {
                   "type": "object",
@@ -406,6 +407,11 @@ public sealed partial class WebFetchTool : ToolBase
                 + (fileTruncated ? " The saved file itself was truncated (exceeded the spill size limit)." : "");
         }
         result["links"] = links;
+
+        // JSON 结构摘要:数组/对象给确定性 shape(type/length/item_keys,两层封顶),
+        // 模型看摘要即可决定抽哪些字段,不必通读全文(解析失败/超大/非 JSON 静默跳过)
+        if (WebFetchContent.TryBuildJsonShape(text, contentType) is { } shape)
+            result["shape"] = shape;
         return JsonSerializer.Serialize(result, ToolJson.Options);
     }
 
