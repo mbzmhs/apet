@@ -12,8 +12,12 @@ public sealed class TerminalToolOptions
     /// <summary>工作目录,为空时使用进程当前目录。</summary>
     public string? WorkingDirectory { get; set; }
 
-    /// <summary>命令超时秒数,超时后终止整个进程树。</summary>
-    public int TimeoutSeconds { get; set; } = 120;
+    /// <summary>命令超时秒数,超时后终止整个进程树。单次调用可用 timeout_seconds 参数放宽。</summary>
+    public int TimeoutSeconds { get; set; } = 60;
+
+    /// <summary>timeout_seconds 参数钳制:下限 10 防无意义的秒级超时误杀,上限 600——
+    /// 更长的任务应走 bg_run(后台运行),不是拉长前台阻塞。</summary>
+    public static int ClampTimeout(int requested) => Math.Clamp(requested, 10, 600);
 
     /// <summary>stdout/stderr 各自保留的最大字符数,超出截断。</summary>
     public int MaxOutputChars { get; set; } = 20_000;

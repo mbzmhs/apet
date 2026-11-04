@@ -772,7 +772,7 @@ public sealed class AgentHost
     /// </summary>
     private static void ConfigureBuiltIns(BuiltInToolOptions options, AgentConfig agentConfig)
     {
-        options.Terminal.TimeoutSeconds = 60;
+        // 终端超时不在此覆盖:框架默认(60s)即唯一口径,单次放宽由模型的 timeout_seconds 参数决定
         options.Terminal.Shell = ResolveTerminalShell(agentConfig.TerminalShell);
         options.WebFetch.ProxyMode = agentConfig.Llm.ProxyMode;
         options.WebFetch.ProxyUrl = agentConfig.Llm.ProxyUrl;

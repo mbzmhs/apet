@@ -35,12 +35,14 @@ public sealed class TerminalTool : BuiltinToolBase
             return ToolDefinition.Create(
                 "bash",
                 $"Execute a single command in {shell.DisplayName} and return JSON (exit_code/stdout/stderr/timed_out)."
-                + $" Timeout: {_options.TimeoutSeconds} seconds. Current terminal: {shell.DisplayName}.",
+                + $" Default timeout: {_options.TimeoutSeconds} seconds; pass timeout_seconds (10-600) for longer tasks."
+                + " For tasks beyond 600 seconds use bg_run instead. Current terminal: " + shell.DisplayName + ".",
                 """
                 {
                   "type": "object",
                   "properties": {
-                    "command": { "type": "string", "description": "The command to execute" }
+                    "command": { "type": "string", "description": "The command to execute" },
+                    "timeout_seconds": { "type": "integer", "description": "Per-call timeout in seconds (10-600). On timeout the process tree is killed and timed_out=true is returned." }
                   },
                   "required": ["command"]
                 }
@@ -88,6 +90,10 @@ public sealed class TerminalTool : BuiltinToolBase
         var command = doc.RootElement.GetProperty("command").GetString();
         if (string.IsNullOrWhiteSpace(command))
             throw new ArgumentException("Command must not be empty.");
+        // 单次超时放宽:模型按任务时长自选,钳制 10~600;更长的任务由提示引向 bg_run
+        var timeoutSeconds = doc.RootElement.TryGetProperty("timeout_seconds", out var ts)
+            ? TerminalToolOptions.ClampTimeout(ts.GetInt32())
+            : _options.TimeoutSeconds;
 
         var shell = ResolveShell();
         var psi = new ProcessStartInfo(shell.FileName)
@@ -121,7 +127,7 @@ public sealed class TerminalTool : BuiltinToolBase
 
         var timedOut = false;
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.TimeoutSeconds)));
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try
         {
             await process.WaitForExitAsync(timeoutCts.Token);
@@ -154,16 +160,18 @@ public sealed class TerminalTool : BuiltinToolBase
         if (!drained)
             stderrText = (stderrText + "\n[output drain timed out: a background child process still holds the output pipes; output above may be incomplete]").TrimStart('\n');
 
-        var result = new
+        var result = new Dictionary<string, object?>
         {
-            command,
-            exit_code = process.HasExited ? process.ExitCode : -1,
-            timed_out = timedOut,
+            ["command"] = command,
+            ["exit_code"] = process.HasExited ? process.ExitCode : -1,
+            ["timed_out"] = timedOut,
             // 输出未完全排空(命令留下了持有管道的后台子进程):模型据此知道上面输出可能不完整
-            output_incomplete = !drained,
-            stdout = Truncate(DecodeOutput(stdoutRaw.Snapshot())),
-            stderr = Truncate(stderrText),
+            ["output_incomplete"] = !drained,
+            ["stdout"] = Truncate(DecodeOutput(stdoutRaw.Snapshot())),
+            ["stderr"] = Truncate(stderrText),
         };
+        if (timedOut)
+            result["hint"] = $"Command was killed after {timeoutSeconds}s (timed out). For longer tasks use bg_run instead, or raise timeout_seconds (10-600) on this call.";
         return JsonSerializer.Serialize(result, ToolJson.Options);
     }
 
