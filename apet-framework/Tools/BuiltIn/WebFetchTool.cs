@@ -171,14 +171,17 @@ public sealed partial class WebFetchTool : ToolBase
                 + " (pass max_chars to widen the viewport for one call, up to 100000 characters);"
                 + " when truncated, the complete content is also saved to content_path (read it with read_file offset/limit),"
                 + " and content_size reports the full length."
-                + " JSON responses include a deterministic shape summary (type/length/item_keys, two levels deep)",
+                + " JSON responses include a deterministic shape summary (type/length/item_keys, two levels deep)"
+                + " ; HTML pages in markdown format also include an outline (h1-h3 with offsets, up to 50),"
+                + " and accept section=\"<heading prefix>\" to return just that section (subject to the same viewport/spill limits).",
                 """
                 {
                   "type": "object",
                   "properties": {
                     "url": { "type": "string", "description": "The http(s) URL to fetch" },
                     "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Output format for HTML pages; markdown (default) preserves document structure" },
-                    "max_chars": { "type": "integer", "description": "Per-call inline content limit (1000-100000). Default: server-configured viewport. Overflow is still saved to content_path." }
+                    "max_chars": { "type": "integer", "description": "Per-call inline content limit (1000-100000). Default: server-configured viewport. Overflow is still saved to content_path." },
+                    "section": { "type": "string", "description": "Heading-text prefix; return only that section of a markdown page (check outline first). section_not_found=true means no heading matched" }
                   },
                   "required": ["url"]
                 }
@@ -193,13 +196,14 @@ public sealed partial class WebFetchTool : ToolBase
 
     public override async Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
     {
-        string url, format;
+        string url, format, section;
         int maxChars;
         try
         {
             using var doc = JsonDocument.Parse(argumentsJson);
             url = doc.RootElement.GetProperty("url").GetString() ?? "";
             format = doc.RootElement.TryGetProperty("format", out var f) ? f.GetString() ?? "" : "markdown";
+            section = doc.RootElement.TryGetProperty("section", out var sec) ? sec.GetString() ?? "" : "";
             // 单次视口放宽:模型对中等长度文档可直接申请更大上限,省掉落盘往返;
             // 钳制在 [1000, 100_000],防异常取值把上下文撑爆
             maxChars = doc.RootElement.TryGetProperty("max_chars", out var mc)
@@ -228,7 +232,7 @@ public sealed partial class WebFetchTool : ToolBase
 
         try
         {
-            return await FetchAsync(uri, format, maxChars, timeoutCts.Token);
+            return await FetchAsync(uri, format, maxChars, section, timeoutCts.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -244,7 +248,7 @@ public sealed partial class WebFetchTool : ToolBase
         }
     }
 
-    private async Task<string> FetchAsync(Uri uri, string format, int maxChars, CancellationToken timeoutToken)
+    private async Task<string> FetchAsync(Uri uri, string format, int maxChars, string section, CancellationToken timeoutToken)
     {
         // 循环抓取:HTML 里的 meta refresh / JS 跳转(如 Google 搜索的提示页)自动跟进目标地址
         string text;
@@ -358,13 +362,36 @@ public sealed partial class WebFetchTool : ToolBase
 
         // HTML 按请求的格式输出:markdown(默认,保留结构)/ 纯文本 / 原始 HTML;
         // 非 HTML 内容不受 format 影响,原样返回
-        if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase))
+        var isHtml = contentType.Contains("html", StringComparison.OrdinalIgnoreCase);
+        if (isHtml)
             text = format switch
             {
                 "markdown" => HtmlToMarkdown(rawHtml, current),
                 "html" => rawHtml,
                 _ => HtmlToText(rawHtml),
             };
+
+        // 大纲与按节读取(仅 markdown 形态):outline 供模型先看结构再选节;section 按
+        // 标题前缀提取单节(未命中如实上报,正文保持整页)。节内容同样受视口与落盘约束
+        List<object?>? outline = null;
+        var sectionMatches = 0;
+        var sectionNotFound = false;
+        if (isHtml && format == "markdown")
+        {
+            outline = WebFetchContent.BuildOutline(text);
+            if (section.Trim().Length > 0)
+            {
+                if (WebFetchContent.ExtractSection(text, section) is { } found)
+                {
+                    text = found.Content;
+                    sectionMatches = found.Matches;
+                }
+                else
+                {
+                    sectionNotFound = true;
+                }
+            }
+        }
 
         // 视口截断 + 溢出落盘:前 N 字符照旧内联返回,完整内容落固定缓存目录供 read_file 续读——
         // "截断是门不是墙":此前超出部分直接丢弃,模型只能整页重拉(bash+curl)再提取
@@ -386,9 +413,7 @@ public sealed partial class WebFetchTool : ToolBase
         }
 
         // 提取页面超链接(绝对化 + 链接文字,去重,上限 50 条)供 agent 进一步探索
-        var links = contentType.Contains("html", StringComparison.OrdinalIgnoreCase)
-            ? ExtractLinks(rawHtml, current)
-            : [];
+        var links = isHtml ? ExtractLinks(rawHtml, current) : [];
 
         var result = new Dictionary<string, object?>
         {
@@ -407,6 +432,12 @@ public sealed partial class WebFetchTool : ToolBase
                 + (fileTruncated ? " The saved file itself was truncated (exceeded the spill size limit)." : "");
         }
         result["links"] = links;
+        if (outline is not null)
+            result["outline"] = outline;
+        if (sectionMatches > 0)
+            result["section_matches"] = sectionMatches;
+        if (sectionNotFound)
+            result["section_not_found"] = true;
 
         // JSON 结构摘要:数组/对象给确定性 shape(type/length/item_keys,两层封顶),
         // 模型看摘要即可决定抽哪些字段,不必通读全文(解析失败/超大/非 JSON 静默跳过)

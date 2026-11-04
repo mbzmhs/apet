@@ -183,6 +183,65 @@ public static partial class WebFetchContent
     }
 
     // 标题行:行首 1~6 个 # 加空格(嵌套代码块里的 # 行也可能命中——大纲是近似视图,可接受)
+    /// <summary>markdown 大纲:h1~h3 标题行,上限 50 条,offset 为标题行在文本中的字符偏移。</summary>
+    public static List<object?>? BuildOutline(string markdown)
+    {
+        var outline = new List<object?>();
+        foreach (Match match in HeadingLine().Matches(markdown))
+        {
+            var level = match.Groups["level"].Value.Length;
+            if (level > 3)
+                continue;
+            var text = match.Groups["text"].Value.Trim();
+            if (text.Length == 0)
+                continue;
+            if (text.Length > 120)
+                text = text[..120].TrimEnd() + "…";
+            outline.Add(new Dictionary<string, object?>
+            {
+                ["level"] = level,
+                ["text"] = text,
+                ["offset"] = match.Index,
+            });
+            if (outline.Count >= 50)
+                break;
+        }
+        return outline.Count > 0 ? outline : null;
+    }
+
+    /// <summary>按标题前缀提取节内容(到下一个同级或更高级标题为止,即到下一个 level ≤ 起始 level 的标题)。
+    /// 返回(节内容, 同名匹配总数);无匹配返回 null。忽略大小写,可命中任意级别的标题。</summary>
+    public static (string Content, int Matches)? ExtractSection(string markdown, string titlePrefix)
+    {
+        if (string.IsNullOrWhiteSpace(titlePrefix))
+            return null;
+        (int Level, int Offset, string Text)? first = null;
+        var total = 0;
+        foreach (Match match in HeadingLine().Matches(markdown))
+        {
+            var text = match.Groups["text"].Value.Trim();
+            if (!text.StartsWith(titlePrefix.Trim(), StringComparison.OrdinalIgnoreCase))
+                continue;
+            total++;
+            first ??= (match.Groups["level"].Value.Length, match.Index, text);
+        }
+        if (first is null)
+            return null;
+        var (level, offset, _) = first.Value;
+        var end = markdown.Length;
+        foreach (Match match in HeadingLine().Matches(markdown))
+        {
+            if (match.Index <= offset)
+                continue;
+            if (match.Groups["level"].Value.Length <= level)
+            {
+                end = match.Index;
+                break;
+            }
+        }
+        return (markdown[offset..end].Trim(), total);
+    }
+
     [GeneratedRegex("^(?<level>#{1,6})\\s+(?<text>.+)$", RegexOptions.Multiline)]
     private static partial Regex HeadingLine();
 }
