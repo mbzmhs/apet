@@ -11,6 +11,9 @@ public sealed class BuiltInToolOptions
 
     public FileToolOptions Patch { get; } = new();
 
+    /// <summary>搜索类工具(search_files / find_files)共用:根目录约束与默认编码。</summary>
+    public FileToolOptions Search { get; } = new();
+
     public TerminalToolOptions Terminal { get; } = new();
 
     public WebFetchToolOptions WebFetch { get; } = new();
@@ -19,7 +22,8 @@ public sealed class BuiltInToolOptions
 public static class ToolRegistryExtensions
 {
     /// <summary>
-    /// 注册内置工具:read_file / write_file / edit_file / apply_patch / bash / web_fetch。
+    /// 注册内置工具:read_file / write_file / edit_file / apply_patch / bash / web_fetch /
+    /// search_files / find_files。
     /// 注册后均为启用状态,宿主可通过工具实例的 Enabled 随时开关。
     /// </summary>
     public static ToolRegistry RegisterBuiltIns(this ToolRegistry registry, Action<BuiltInToolOptions>? configure = null)
@@ -32,6 +36,8 @@ public static class ToolRegistryExtensions
         registry.Register(new ApplyPatchTool(options.Patch));
         registry.Register(new TerminalTool(options.Terminal));
         registry.Register(new WebFetchTool(options.WebFetch));
+        registry.Register(new SearchFilesTool(options.Search));
+        registry.Register(new FindFilesTool(options.Search));
         return registry;
     }
 }
