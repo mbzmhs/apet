@@ -70,6 +70,18 @@ public static class ShellCommandTables
         "path", "literalpath", "filepath", "pspath", "file", "fileinfo",
     };
 
+    /// <summary>PowerShell 取值型非路径参数:紧随的字符串元素是参数值,不是文件系统路径
+    /// (-ErrorAction SilentlyContinue)。开关参数(-Recurse/-Force)与未知名不在其中:
+    /// 开关后是位置参数,吞值曾把 Remove-Item -Recurse -Force x 的目标整个吞掉。</summary>
+    public static readonly HashSet<string> PsValueParams = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "erroraction", "warningaction", "informationaction",
+        "errorvariable", "warningvariable", "informationvariable",
+        "outvariable", "outbuffer", "pipelinevariable",
+        "encoding", "credential", "width", "delimiter", "itemtype", "value",
+        "totalcount", "head", "tail", "first", "skip", "depth",
+    };
+
     /// <summary>git 只读子命令(不改变仓库状态)。</summary>
     public static readonly HashSet<string> GitReadOnlySubcommands = new(StringComparer.OrdinalIgnoreCase)
     {

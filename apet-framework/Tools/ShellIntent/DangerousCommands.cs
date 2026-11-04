@@ -11,6 +11,17 @@ public static class DangerousCommands
     /// <summary>rm 单字符旗标里公认无害的字符;簇里出现清单外字符按危险处理(宁可多问)。</summary>
     private const string HarmlessRmFlags = "fivdnqh?";
 
+    /// <summary>删除类命令的已知无害长参数名(PowerShell 风格,参数记号已由 PS 分析器记回
+    /// Args):不触发"未知旗标从宽"。recurse/recursive 不在此列——命中即按递归判危险。</summary>
+    private static readonly HashSet<string> HarmlessDeleteParams = new(StringComparer.Ordinal)
+    {
+        "path", "literalpath", "filter", "include", "exclude", "credential", "force",
+        "whatif", "confirm", "verbose", "debug", "passthru",
+        "erroraction", "warningaction", "informationaction",
+        "errorvariable", "warningvariable", "informationvariable",
+        "outvariable", "outbuffer", "pipelinevariable",
+    };
+
     public static bool IsInvolved(IntentResult intent)
     {
         foreach (var command in intent.Commands)
@@ -73,6 +84,16 @@ public static class DangerousCommands
                     continue;
                 }
                 var cluster = body.ToLowerInvariant();
+                // PowerShell 长参数名(-Recurse/-Path,长度 >3)按名判定,不做逐字符扫描——
+                // -LiteralPath 里的 r 不是递归旗标
+                if (cluster.Length > 3)
+                {
+                    if (cluster.Contains("recurse") || cluster.Contains("recursive"))
+                        return true;
+                    if (unknownFlagIsDangerous && !HarmlessDeleteParams.Contains(cluster))
+                        return true; // 未知名:参数含义无法预判,从宽
+                    continue;
+                }
                 if (cluster.Any(c => c is 'r' or 's')) // r/R=递归(POSIX/PS 缩写), s=cmd /s 子目录
                     return true;
                 if (unknownFlagIsDangerous && cluster.Any(c => !HarmlessRmFlags.Contains(c)))

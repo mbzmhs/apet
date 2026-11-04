@@ -192,7 +192,7 @@ public sealed class PowerShellIntentAnalyzer : IIntentAnalyzer
                     });
                     if (cls == CommandClass.Uncertain)
                         result.HasUncertain = true;
-                    if (IsCd(tokens.Name) && tokens.Args.FirstOrDefault() is { } target)
+                    if (IsCd(tokens.Name) && tokens.Args.FirstOrDefault(a => !a.StartsWith('-')) is { } target)
                     {
                         var next = ResolvePath(chainCwd, target);
                         if (next is not null)
@@ -348,8 +348,9 @@ public sealed class PowerShellIntentAnalyzer : IIntentAnalyzer
         }
 
         var elements = Enumerate(Prop(cmd, "CommandElements", "Elements")).ToList();
-        // PS5.1 中非路径参数的值常是紧随的独立元素(-ErrorAction SilentlyContinue):
-        // 记录"上一个参数在等值且该参数非路径类",把紧随的字符串按参数值吞掉,不当路径
+        // PS5.1 中取值型非路径参数(-ErrorAction SilentlyContinue)的值是紧随的独立元素:
+        // 记录"上一个参数在等值",把紧随的字符串按参数值吞掉,不当路径。
+        // 仅已知取值参数吞值;开关参数(-Recurse/-Force)后是位置参数,吞掉曾致目标整体漏判
         var pendingNonPathValue = false;
         for (var i = 0; i < elements.Count; i++)
         {
@@ -417,18 +418,26 @@ public sealed class PowerShellIntentAnalyzer : IIntentAnalyzer
             if (ename is "CommandParameterAst")
             {
                 var pname = (string?)Prop(el, "NameIgnoreCase", "ParameterName", "Name") ?? "";
+                var lower = pname.ToLowerInvariant();
+                // 参数记号回写 Args(归一为小写旗标):灾难清单与旗标扫描依赖可见的 -Recurse/-Force——
+                // 此前参数整体丢弃,Remove-Item -Recurse -Force x 被判成无参命令,读写档静默放行
+                if (lower.Length > 0)
+                    tokens.Args.Add("-" + lower);
                 var value = Prop(el, "Value");
                 if (value is not null)
                 {
                     // 非路径命名参数(-Filter 是通配模式…)不是文件系统路径
-                    if (ShellCommandTables.PathParams.Contains(pname.ToLowerInvariant()))
+                    if (ShellCommandTables.PathParams.Contains(lower))
                         CollectArgument(value, tokens, result);
                 }
-                else if (!ShellCommandTables.PathParams.Contains(pname.ToLowerInvariant()))
+                else if (!ShellCommandTables.PathParams.Contains(lower)
+                         && ShellCommandTables.PsValueParams.Contains(lower))
                 {
-                    // 参数未带值且非路径类:其值(若有)是紧随的独立元素,按参数值处理而非路径
+                    // 已知取值型非路径参数(-ErrorAction SilentlyContinue):
+                    // 其值是紧随的独立元素,吞掉不当路径
                     pendingNonPathValue = true;
                 }
+                // 开关参数(-Recurse/-Force)与未知参数不吞紧随元素;
                 // 路径类参数的分离值(-Path x 的 x)由主循环按位置参数收集,是真实路径
                 continue;
             }
@@ -553,7 +562,12 @@ public sealed class PowerShellIntentAnalyzer : IIntentAnalyzer
     }
 
     private static bool IsCd(string name) =>
-        name.Length > 0 && (name is "cd" or "sl" or "set-location" or "push-location" or "pop-location");
+        name.Length > 0
+        && (name.Equals("cd", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("sl", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("set-location", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("push-location", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("pop-location", StringComparison.OrdinalIgnoreCase));
 
     private static string PlainName(string token)
     {
