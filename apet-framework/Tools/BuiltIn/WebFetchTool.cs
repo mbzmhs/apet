@@ -20,6 +20,15 @@ public sealed class WebFetchToolOptions
     /// <summary>返回给模型的正文字符数上限(超出截断,避免撑爆上下文)。</summary>
     public int MaxCharacters { get; set; } = 20_000;
 
+    /// <summary>溢出落盘目录:正文超过视口上限时,完整内容写入这个固定缓存目录供 read_file 续读。
+    /// 默认在应用数据根下,宿主配置不暴露此路径(不受目录权限档位管辖的内部例外,见 README)。
+    /// 属性仅供测试重定向。</summary>
+    public string SpillDirectory { get; set; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "APet", "fetch-cache");
+
+    /// <summary>落盘内容上限:单文件超过仍截断并在文件尾如实标注,防异常超大页面写爆磁盘。</summary>
+    public int SpillMaxCharacters { get; set; } = 2_000_000;
+
     /// <summary>代理方式:system(使用系统代理)/ none(不使用)/ custom(自定义 ProxyUrl),与 LLM 连接的代理设定同源。</summary>
     public string ProxyMode { get; set; } = "system";
 
@@ -30,7 +39,10 @@ public sealed class WebFetchToolOptions
 /// <summary>
 /// 抓取网页:HTTP(S) GET 指定 URL,把响应正文返回给模型
 /// (HTML 默认转 markdown 保留结构,可选纯文本/原始 HTML;JSON/文本原样返回,二进制拒绝)。
-/// 浏览器 UA + Cloudflare 质询时诚实 UA 重试;仅访问网络、无文件系统影响(NoEffect),不触发文件鉴权。
+/// 浏览器 UA + Cloudflare 质询时诚实 UA 重试。
+/// 效果模型:网络访问无文件系统影响(NoEffect),不触发文件鉴权——唯一例外是正文超过
+/// 视口上限时把完整内容写入固定的应用缓存目录(见 WebFetchContent),该目录由宿主固定、
+/// 模型不可指定,故效果模型保持 NoEffect 不变;例外在 README 安全模型中显式记载。
 /// </summary>
 public sealed partial class WebFetchTool : ToolBase
 {
@@ -56,6 +68,8 @@ public sealed partial class WebFetchTool : ToolBase
     {
         _options = options ?? new WebFetchToolOptions();
         _client = CreateClient(); // 构造即建:并发首调用不再各自建连
+        // 落盘缓存过期清理(7 天):构造即扫一次,此后每次落盘顺带扫
+        WebFetchContent.CleanupOldFiles(_options.SpillDirectory, TimeSpan.FromDays(7));
     }
 
     /// <summary>运行配置(宿主热更新代理设定时修改后需调用 ResetClient)。</summary>
@@ -153,7 +167,9 @@ public sealed partial class WebFetchTool : ToolBase
                 + " For HTML pages the result also contains a links array (absolute url + text, up to"
                 + $" {WebFetchToolOptions.MaxLinks} entries) so you can fetch linked pages for further exploration."
                 + " Intranet, loopback and link-local targets are rejected (blocked_host)."
-                + $" Timeout: {_options.TimeoutSeconds} seconds. Content is truncated to {_options.MaxCharacters} characters.",
+                + $" Timeout: {_options.TimeoutSeconds} seconds. Content is truncated to {_options.MaxCharacters} characters;"
+                + " when truncated, the complete content is also saved to content_path (read it with read_file offset/limit),"
+                + " and content_size reports the full length.",
                 """
                 {
                   "type": "object",
@@ -168,7 +184,8 @@ public sealed partial class WebFetchTool : ToolBase
         }
     }
 
-    /// <summary>纯网络访问,无文件系统影响,无需鉴权。</summary>
+    /// <summary>纯网络访问,无文件系统影响,无需鉴权。例外:溢出落盘写固定应用缓存目录,
+    /// 路径由 URL hash 派生、模型不可指定,故不改变效果模型(见类注释与 README)。</summary>
     public override ToolEffect AnalyzeEffect(string argumentsJson) => ToolEffect.NoEffect;
 
     public override async Task<string> ExecuteAsync(string argumentsJson, CancellationToken cancellationToken = default)
@@ -336,25 +353,48 @@ public sealed partial class WebFetchTool : ToolBase
                 _ => HtmlToText(rawHtml),
             };
 
+        // 视口截断 + 溢出落盘:前 N 字符照旧内联返回,完整内容落固定缓存目录供 read_file 续读——
+        // "截断是门不是墙":此前超出部分直接丢弃,模型只能整页重拉(bash+curl)再提取
         truncated = text.Length > _options.MaxCharacters;
+        string contentPath;
+        long contentSize;
+        var fileTruncated = false;
         if (truncated)
-            text = text[.._options.MaxCharacters];
+        {
+            contentPath = WebFetchContent.BuildSpillFileName(uri, contentType, format);
+            (contentPath, contentSize, fileTruncated) =
+                WebFetchContent.WriteSpillFile(_options.SpillDirectory, contentPath, text, _options.SpillMaxCharacters);
+            WebFetchContent.CleanupOldFiles(_options.SpillDirectory, TimeSpan.FromDays(7));
+        }
+        else
+        {
+            contentPath = "";
+            contentSize = 0;
+        }
 
         // 提取页面超链接(绝对化 + 链接文字,去重,上限 50 条)供 agent 进一步探索
         var links = contentType.Contains("html", StringComparison.OrdinalIgnoreCase)
             ? ExtractLinks(rawHtml, current)
             : [];
 
-        return JsonSerializer.Serialize(new
+        var result = new Dictionary<string, object?>
         {
-            url = current.ToString(),
-            status,
-            contentType,
-            redirects,
-            truncated,
-            content = text,
-            links,
-        }, ToolJson.Options);
+            ["url"] = current.ToString(),
+            ["status"] = status,
+            ["contentType"] = contentType,
+            ["redirects"] = redirects,
+            ["truncated"] = truncated,
+            ["content"] = truncated ? text[.._options.MaxCharacters] : text,
+        };
+        if (truncated)
+        {
+            result["content_path"] = contentPath;
+            result["content_size"] = contentSize;
+            result["hint"] = "Full content saved to content_path; read it with read_file (offset/limit)."
+                + (fileTruncated ? " The saved file itself was truncated (exceeded the spill size limit)." : "");
+        }
+        result["links"] = links;
+        return JsonSerializer.Serialize(result, ToolJson.Options);
     }
 
     /// <summary>从 HTML 提取超链接:相对地址绝对化、去 javascript:/锚点、按 URL 去重、上限 50 条。</summary>
