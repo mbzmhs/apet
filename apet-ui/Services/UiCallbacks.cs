@@ -206,9 +206,9 @@ public sealed class UiCallbacks : AgentCallbacks
         // 鉴权卡片插入助手消息的步骤流(与工具行同序),等待用户允许/拒绝(取消运行视为拒绝)
         var (detail, reason, command) = BuildAuthCard(toolCall, effect, decision);
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var trustDirs = CollectTrustDirs(effect);
-        AuthRequestViewModel card = null!;
         var permissionKey = ToolPermission.GetKey(toolCall.Name); // 文件修改类共用 "edit"
+        var trustDirs = CollectTrustDirs(effect, permissionKey);
+        AuthRequestViewModel card = null!;
         await _dispatcher.InvokeAsync(() =>
         {
             card = _assistant.AddAuthRequest(detail, reason, command, trustDirs, tcs);
@@ -233,21 +233,28 @@ public sealed class UiCallbacks : AgentCallbacks
 
     /// <summary>受影响路径所在的目录列表(去重),供"信任此目录"。
     /// 只对真实存在的路径派生目录:解析器在未知命令上提取的记号(如未展开变量/URL 片段)
-    /// 可能拼出不存在的"幻影目录",对其信任会写入无意义的白名单。</summary>
-    private static IReadOnlyList<string> CollectTrustDirs(ToolEffect effect)
+    /// 可能拼出不存在的"幻影目录",对其信任会写入无意义的白名单。
+    /// 文件类工具(edit)例外:写入目标可以是尚未创建的新文件,路径不存在时取其直接
+    /// 父目录(须已存在)作候选——新文件写入若连信任入口都没有,目录白名单形同虚设;
+    /// 不向上追溯,2026-09 否掉的"上溯到最近已存在祖先"(过宽信任)行为仍不恢复。</summary>
+    private static IReadOnlyList<string> CollectTrustDirs(ToolEffect effect, string? toolKey)
     {
         var dirs = new List<string>();
+        var isFileTool = toolKey == "edit";
         foreach (var path in effect.Paths)
         {
             try
             {
                 var full = Path.GetFullPath(path);
-                // 策略调整(用户决定,2026-09):不存在的路径(幻影目录/尚未创建的目录)直接跳过,
-                // 不再上溯到最近已存在的祖先目录——上溯会把不存在的目录(如 C:\Users\...\桌面)
-                // 变成其父目录(如用户主目录)作为信任候选,信任范围比用户预期更宽。
-                // 若日后需要"信任最近已存在祖先"行为,在此恢复上溯逻辑即可。
                 if (!File.Exists(full) && !Directory.Exists(full))
+                {
+                    var parent = isFileTool ? Path.GetDirectoryName(full) : null;
+                    if (string.IsNullOrEmpty(parent) || !Directory.Exists(parent))
+                        continue;
+                    if (!dirs.Contains(parent, StringComparer.OrdinalIgnoreCase))
+                        dirs.Add(parent);
                     continue;
+                }
                 var dir = Directory.Exists(full) ? full : Path.GetDirectoryName(full);
                 if (!string.IsNullOrEmpty(dir) && !dirs.Contains(dir, StringComparer.OrdinalIgnoreCase))
                     dirs.Add(dir);
