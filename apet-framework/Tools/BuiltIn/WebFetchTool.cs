@@ -109,7 +109,9 @@ public sealed partial class WebFetchTool : ToolBase
                 break;
         }
         // 无代理直连时在建连点复检目标 IP:把"预检时解析"与"实际建连时解析"之间的
-        // 时间差隧道封死。代理模式连接端点是代理本身、无从校验目标,依赖逐跳预检
+        // 时间差隧道封死。代理模式连接端点是代理本身、无从校验目标,仅靠逐跳预检
+        // (预检本机解析、连接代理解析)——防护较直连退化为尽力而为,TTL=0 域名的
+        // 两解析之间翻转属残余风险
         if (!usingProxy)
             handler.ConnectCallback = ConnectWithPrivateAddressGuard;
         // 只用于 UA 等默认头;超时按请求用 CancellationToken 控制
@@ -259,12 +261,12 @@ public sealed partial class WebFetchTool : ToolBase
         var redirects = 0;
         var current = uri;
         var challengeRetried = false; // Cloudflare 质询的诚实 UA 重试只做一次
-        var checkedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // 同宿主只检一次
         while (true)
         {
-            // 每跳目标过闸:环回/私网/链路本地一律拒绝(初始 URL、3xx 与页面内跳转共用此入口)
-            if (checkedHosts.Add(current.Host)
-                && await NetworkGuard.IsBlockedTargetAsync(current.Host, timeoutToken))
+            // 每跳目标过闸:环回/私网/链路本地一律拒绝(初始 URL、3xx 与页面内跳转共用此入口)。
+            // 不做同宿主去重:代理模式下预检用本机 DNS、实际连接由代理解析,存在解析漂移窗口,
+            // 每跳重检把窗口压到最小(直连模式另有建连点复检兜底)
+            if (await NetworkGuard.IsBlockedTargetAsync(current.Host, timeoutToken))
             {
                 return JsonSerializer.Serialize(new
                 {
