@@ -164,31 +164,11 @@ public sealed class Agent
 
         // 增量写回状态(声明在 try 外,中断/异常路径也能补写):每轮迭代完成即把"助手与工具结果成对"的消息
         // 写回会话,长任务被打断或异常时已完成部分不丢;未完成迭代不成对,不写,避免孤儿 tool_calls 污染上下文。
-        var writeIndex = 0; // 工作消息中已写回会话的边界
-        var completedIndex = 0; // 已完成迭代的工作消息边界
-        var flushed = new List<ChatMessage>();
+        // 按引用追踪(WriteBackTracker):运行中压缩会 Clear+AddRange 重排 working,下标基线在新布局上
+        // 会错位(界内哨兵自匹配跳过区间、越界时每轮零写回),引用记账不受重排影响。
+        var writeBack = new WriteBackTracker(batch => session.AddMessages(batch));
+        var flushed = writeBack.Flushed;
         var outcome = RunOutcome.Failed("run did not start"); // 三态结局,finally 交给 OnRunFinishedAsync
-
-        void Flush()
-        {
-            if (working.Count == 0)
-                return;
-            // 写回基线重新定位:运行中压缩会重排工作消息。以最后一条已写回消息为哨兵找新位置;
-            // 找不到说明它被摘要替换(压缩把已写回前缀整体换成了 system+summary),此后均未写回。
-            if (writeIndex > 0 && writeIndex <= working.Count)
-            {
-                var sentinel = working[writeIndex - 1];
-                var idx = working.IndexOf(sentinel);
-                writeIndex = idx >= 0 ? idx + 1 : Math.Min(2, working.Count);
-            }
-            if (completedIndex > writeIndex && completedIndex <= working.Count)
-            {
-                var batch = working.GetRange(writeIndex, completedIndex - writeIndex);
-                session.AddMessages(batch);
-                flushed.AddRange(batch);
-                writeIndex = completedIndex;
-            }
-        }
 
         try
         {
@@ -197,26 +177,10 @@ public sealed class Agent
             {
                 await registration.Plugin.OnBeforeRunAsync(this, session, working);
             }
-            // 写回基线:运行前压缩可能已重排工作消息,以第一条新增消息的位置为准(队列插话在输入之前,一并写回)
-            writeIndex = working.IndexOf(firstQueued ?? inputMessage);
-            if (writeIndex < 0)
-                writeIndex = working.IndexOf(inputMessage);
-            if (writeIndex < 0)
-                writeIndex = working.Count; // 输入被插件移除:不写回,避免把保留窗口重复写进历史
-            completedIndex = writeIndex;
-
-            // 用户输入立刻落盘(含此前收编的队列插话):生成中按停止,用户消息不再随中断一并消失,
-            // /undo 也始终有回滚锚点。助手/工具仍按「完整迭代成对写回」节奏(未完成不成对,不写,
-            // 避免孤儿 tool_calls 污染上下文);落库时机在宿主的运行收尾 SaveSession(中断路径同样执行)
-            var inputIdx = working.IndexOf(inputMessage);
-            if (inputIdx >= writeIndex)
-            {
-                var head = working.GetRange(writeIndex, inputIdx - writeIndex + 1);
-                session.AddMessages(head);
-                flushed.AddRange(head);
-                writeIndex = inputIdx + 1;
-                completedIndex = Math.Max(completedIndex, writeIndex);
-            }
+            // 写回基线:运行前压缩可能已重排工作消息。输入头部(先于输入的队列插话 + 输入)立刻落盘;
+            // 输入被插件移除时整段不写(避免把保留窗口重复写进历史)
+            writeBack.CaptureInput(working, inputMessage, firstQueued);
+            writeBack.Flush();
 
             _log.Info($"Agent run started session={session.Id} context={session.Messages.Count} messages, input={(userInput?.Length ?? 0)} chars, images={images?.Count ?? 0}, textParts={extraTexts?.Count ?? 0}");
 
@@ -224,6 +188,9 @@ public sealed class Agent
             {
                 if (_options.MaxToolIterations > 0 && iteration > _options.MaxToolIterations)
                     throw new LlmException($"Max tool-call iterations ({_options.MaxToolIterations}) reached; the task may not converge.");
+                // 本轮产出的消息(助手 + 工具结果):只有成对完整才进入写回队列——
+                // 中断/异常发生在工具执行中途时整组丢弃,不写孤儿 assistant
+                var iterationMessages = new List<ChatMessage>();
 
                 // 中途消息队列:每次请求发出前收编插话,按 FIFO 追加在本轮待发内容之尾——首轮在输入之后、
                 // 工具轮在上一轮"助手+工具结果"块之后(插话发生在这些内容之后,时序真实,也不拆散配对)。
@@ -234,7 +201,8 @@ public sealed class Agent
                 {
                     var queuedMessages = drained.Select(BuildQueuedChatMessage).ToList();
                     working.AddRange(queuedMessages);
-                    completedIndex = working.Count;
+                    // completedIndex 同步前移(用户消息是原子安全的,请求中途被中断时随最近一次 Flush 一并写回会话)
+                    writeBack.MarkCompleted(queuedMessages);
                     session.RaiseQueueDrained(drained, atRunStart: false);
                     _log.Info($"Agent queue drained mid-run: {drained.Count} message(s) appended before request");
                 }
@@ -262,13 +230,14 @@ public sealed class Agent
                 }
 
                 working.Add(assistant);
+                iterationMessages.Add(assistant);
                 _log.Info($"Model turn {iteration} finished finish_reason={finishReason} content={assistant.Content?.Length ?? 0} chars, toolCalls={assistant.ToolCalls?.Count ?? 0}");
                 await callbacks.OnAssistantMessageAsync(session, assistant, runToken);
 
                 if (finishReason != FinishReason.ToolCalls || assistant.ToolCalls is not { Count: > 0 })
                 {
-                    completedIndex = working.Count; // 最后一轮:助手即最终回复
-                    Flush();
+                    writeBack.MarkCompleted(iterationMessages); // 最后一轮:助手即最终回复
+                    writeBack.Flush();
                     var result = new AgentResult
                     {
                         Content = assistant.Content,
@@ -339,6 +308,7 @@ public sealed class Agent
                         toolMessage.ContentParts = parts;
                     }
                     working.Add(toolMessage);
+                    iterationMessages.Add(toolMessage);
                 }
 
                 // 本轮请求(助手+工具结果)结束后的检查:就地重算阈值,确保下一次请求的上下文不超限
@@ -347,20 +317,21 @@ public sealed class Agent
                     await registration.Plugin.OnAfterTurnAsync(this, session, working, runToken);
                 }
 
-                completedIndex = working.Count; // 本轮迭代完成:助手与全部工具结果成对,可安全写回
-                Flush();
+                // 本轮迭代完成:助手与全部工具结果成对,可安全写回
+                writeBack.MarkCompleted(iterationMessages);
+                writeBack.Flush();
             }
         }
         catch (OperationCanceledException)
         {
-            Flush(); // 中断:已完成迭代写回不丢(未完成的助手/工具不成对,不写,避免孤儿 tool_calls)
+            writeBack.Flush(); // 中断:已完成迭代写回不丢(未完成的助手/工具不成对,不写,避免孤儿 tool_calls)
             _log.Info($"Agent run cancelled session={session.Id}");
             outcome = RunOutcome.Cancelled;
             throw;
         }
         catch (Exception ex)
         {
-            Flush(); // 异常:已完成迭代同样保留
+            writeBack.Flush(); // 异常:已完成迭代同样保留
             _log.Error($"Agent run error session={session.Id}", ex);
             await callbacks.OnErrorAsync(session, ex, cancellationToken);
             outcome = RunOutcome.Failed(ex.Message);
