@@ -457,26 +457,44 @@ public sealed class AgentHost
         Tts.TrySetSetting("language", cfg.Language, out _);
     }
 
-    /// <summary>TTS 设置热更:保存即生效(值推送 + 总开关经插件注册对象驱动 Initialize/Dispose)。</summary>
-    public void ApplyTtsSettings(AgentConfig cfg)
+    /// <summary>TTS 设置热更:保存即生效(值推送 + 总开关经插件注册对象驱动 Initialize/Dispose)。
+    /// 停用方向有运行闸门:有会话正在运行时推迟 Dispose( kills 在跑朗读链),配置回写保持一致;
+    /// 返回 false = 停用被推迟。</summary>
+    public bool ApplyTtsSettings(AgentConfig cfg)
     {
         PushTtsSettings(cfg);
-        Agent.Plugins.Find(Tts.Name)?.SetEnabled(cfg.Tts.Common.Enabled);
+        var registration = Agent.Plugins.Find(Tts.Name);
+        var willDisable = registration is { Enabled: true } && !cfg.Tts.Common.Enabled;
+        if (willDisable && HasRunningSessions?.Invoke() == true)
+        {
+            cfg.Tts.Common.Enabled = true; // 推迟生效:配置回写,保存文件与插件实际状态一致
+            return false;
+        }
+        registration?.SetEnabled(cfg.Tts.Common.Enabled);
+        return true;
     }
 
     /// <summary>
     /// 把 MCP 配置推送到插件(构造与设置页保存共用):总开关关闭或无可用服务器 → 停用插件(断开全部);
     /// 否则按清单差异断开/重连。连接为后台进行,失败记日志,不影响 Agent 运行。
+    /// 停用方向有运行闸门:有会话正在运行时推迟 Dispose(会杀掉 MCP 子进程、中断在跑工具),
+    /// 配置回写保持一致;返回 false = 停用被推迟。
     /// </summary>
-    public void ApplyMcpSettings(McpConfig cfg)
+    public bool ApplyMcpSettings(McpConfig cfg)
     {
         if (Mcp is null)
-            return;
+            return true;
         var registration = Agent.Plugins.Find(Mcp.Name);
         if (registration is null)
-            return;
+            return true;
         var shouldEnable = cfg.Enabled && cfg.Servers.Any(s => s.Enabled
             && (!string.IsNullOrWhiteSpace(s.Command) || !string.IsNullOrWhiteSpace(s.Url)));
+        if (registration.Enabled && !shouldEnable && HasRunningSessions?.Invoke() == true)
+        {
+            if (!cfg.Enabled)
+                cfg.Enabled = true; // 用户显式关闭总开关但被推迟:配置回写,保存文件与插件实际状态一致
+            return false;
+        }
         registration.SetEnabled(shouldEnable);
         if (shouldEnable)
         {
@@ -491,6 +509,7 @@ public sealed class AgentHost
                 .ToList();
             _ = Mcp.ApplyServersAsync(specs);
         }
+        return true;
     }
 
     /// <summary>把技能总开关与停用清单推送到插件(构造与设置页保存共用);技能固定存于用户目录 .apet\skills。</summary>
@@ -505,12 +524,14 @@ public sealed class AgentHost
     /// <summary>
     /// 把子代理设定推送到插件(构造与设置页保存共用):总开关关闭或无有效定义 → 停用插件并下线 sub_* 工具;
     /// 否则热替换定义清单(在跑的子代理不受影响,新 sub_run 用新定义)。
+    /// 停用方向有运行闸门:有会话正在运行时推迟插件 Dispose 与 sub_* 工具下线(会静默取消在跑子代理),
+    /// 配置回写保持一致;返回 false = 停用被推迟。定义热替换不受闸门影响。
     /// 须在 ApplyToolToggles 之后调用:插件总开关联动 sub_* 工具开关,恢复各自持久化开关。
     /// </summary>
-    public void ApplySubAgentSettings(SubAgentConfig cfg)
+    public bool ApplySubAgentSettings(SubAgentConfig cfg)
     {
         if (SubAgent is null)
-            return;
+            return true;
         var defs = (cfg.Agents ?? new List<SubAgentDefConfig>())
             .Where(a => a.Enabled && !string.IsNullOrWhiteSpace(a.Name))
             .Select(a => new SubAgentPlugin.Definition(
@@ -520,13 +541,21 @@ public sealed class AgentHost
             .ToList();
         SubAgent.SetDefinitions(defs);
         var enabled = cfg.Enabled && defs.Count > 0;
-        Agent.Plugins.Find(SubAgent.Name)?.SetEnabled(enabled);
+        var registration = Agent.Plugins.Find(SubAgent.Name);
+        if (registration is { Enabled: true } && !enabled && HasRunningSessions?.Invoke() == true)
+        {
+            if (!cfg.Enabled)
+                cfg.Enabled = true; // 用户显式关闭总开关但被推迟:配置回写,保存文件与插件实际状态一致
+            return false;
+        }
+        registration?.SetEnabled(enabled);
         foreach (var tool in Agent.Tools.GetRegisteredTools()
                      .Where(t => t.Definition.Name.StartsWith("sub_", StringComparison.Ordinal)))
         {
             var persisted = Config.ToolEnabled.TryGetValue(tool.Definition.Name, out var on) ? on : true;
             tool.Enabled = enabled && persisted;
         }
+        return true;
     }
 
     /// <summary>

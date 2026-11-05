@@ -52,7 +52,7 @@ public sealed class MainViewModel : ObservableObject
         _host.Scene.CommandHandler = ExecuteSceneCommand;  // $scene 指令执行器
         _host.RunRequested += OnLiveRunRequested;
         ValidateBiliBinding(); // 持久化的 $blive 绑定指向已不存在的会话时解绑(经 Changed 事件同步清空持久化)
-        _host.HasRunningSessions = () => Sessions.Any(s => s.Session.IsRunning); // 桌宠启停的并发闸门
+        _host.HasRunningSessions = () => Sessions.Any(s => s.IsStreaming || s.Session.IsRunning); // 桌宠启停与插件停用闸门的并发判据
         _host.LlmConfigApplied += ApplyLlmToSessions; // 设置页保存:各会话按自己的供应商/模型重建连接
         _host.SubAgentAuthPopup += card => AuthPopupRequested?.Invoke(card); // 子代理鉴权卡片走主对话同一弹窗通路
         // 子代理 LLM 连接:子代理自身显式指定供应商时用该供应商(Agent 设定内);

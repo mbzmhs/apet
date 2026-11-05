@@ -335,6 +335,12 @@ public sealed class AgentManager : IDisposable
         RebuildMenuItems();
     }
 
+    /// <summary>该 Agent 是否有会话正在运行(流式或轮执行中):停用/删除前的运行态闸门。
+    /// 运行中拆除会打死在跑引擎,目录删除与在写落盘并发且失败静默——与会话级 409 守卫同一口径。</summary>
+    public bool HasRunningSessions(string id) =>
+        _runtimes.TryGetValue(id, out var rt) &&
+        rt.ViewModel.Sessions.Any(s => s.IsStreaming || s.Session.IsRunning);
+
     public void DeleteAgent(string id)
     {
         AgentConfig? agent;

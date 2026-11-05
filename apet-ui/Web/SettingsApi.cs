@@ -90,15 +90,25 @@ public static class SettingsApi
                 rt.Host.ApplyPetSettings(rt.Config.DesktopPet);
                 rt.Host.ApplyChatBubbleSettings(rt.Config.ChatBubble);
                 // MCP 服务器清单/开关按差异重连;技能/MCP/记忆/直播/情景总开关热推
-                rt.Host.ApplyMcpSettings(rt.Config.Mcp);
+                // 插件停用有运行闸门:被推迟时 Apply 内部已回写配置(保持与插件实际状态一致),此处收集提示
+                var deferred = new List<string>();
+                if (!rt.Host.ApplyMcpSettings(rt.Config.Mcp))
+                    deferred.Add("MCP 总开关的停用已推迟");
+                if (!rt.Host.ApplySubAgentSettings(rt.Config.SubAgents))
+                    deferred.Add("子代理总开关的停用已推迟");
+                if (!rt.Host.ApplyTtsSettings(rt.Config))
+                    deferred.Add("TTS 总开关的停用已推迟");
                 rt.Host.ApplySkillsSettings(rt.Config.Skills);
                 rt.Host.ApplyMemorySettings(rt.Config.Memory);
                 rt.Host.ApplyBiliSettings(rt.Config.BiliLive);
                 rt.Host.ApplySceneSettings(rt.Config.SceneEnabled);
-                rt.Host.ApplySubAgentSettings(rt.Config.SubAgents);
-                rt.Host.ApplyTtsSettings(rt.Config); // TTS/语言设置热推(与 WPF 设置页同路径)
                 rt.Config.Save();
-                return (ok: true, petMessage);
+                // 提示合并进 petMessage 通道(前端既有展示位),语义为"本次保存的生效情况"
+                var notice = deferred.Count > 0
+                    ? "⏳ " + string.Join("、", deferred) + ":有会话正在运行,请等会话空闲后再试"
+                    : null;
+                var combinedMessage = string.Join("\n", new[] { petMessage, notice }.Where(m => m is not null));
+                return (ok: true, petMessage: combinedMessage);
             });
             return applied.ok
                 ? Results.Json(new { ok = true, petMessage = applied.petMessage })

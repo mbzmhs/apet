@@ -485,6 +485,12 @@ public sealed class WebServer
                 return Results.BadRequest(new { error = "至少需保留一个 Agent。" });
             if (_manager.Agents.All(a => a.Id != agentId))
                 return Results.NotFound();
+            // 运行态闸门(与会话级删除/归档同一口径):运行中拆除会打死在跑引擎,
+            // 且目录删除与在写落盘并发、失败静默残留
+            var running = Application.Current.Dispatcher.Invoke(() => _manager.HasRunningSessions(agentId));
+            if (running)
+                return Results.Json(new { error = "该 Agent 有会话正在运行,请先停止再删除。" },
+                    statusCode: StatusCodes.Status409Conflict);
             Application.Current.Dispatcher.Invoke(() => _manager.DeleteAgent(agentId));
             return Results.Json(new { ok = true });
         });
@@ -493,6 +499,14 @@ public sealed class WebServer
         {
             if (_manager.Agents.All(a => a.Id != agentId))
                 return Results.NotFound();
+            // 仅停用方向需要闸门:启用只是创建运行时,无副作用
+            if (!req.Enabled)
+            {
+                var running = Application.Current.Dispatcher.Invoke(() => _manager.HasRunningSessions(agentId));
+                if (running)
+                    return Results.Json(new { error = "该 Agent 有会话正在运行,请先停止再停用。" },
+                        statusCode: StatusCodes.Status409Conflict);
+            }
             Application.Current.Dispatcher.Invoke(() => _manager.SetAgentEnabled(agentId, req.Enabled));
             return Results.Json(new { ok = true });
         });
