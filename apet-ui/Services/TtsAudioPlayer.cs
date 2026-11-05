@@ -131,8 +131,11 @@ public sealed class TtsAudioPlayer
             using var ms = new MemoryStream(audio);
             using var wav = new WaveFileReader(ms);
             using var resampler = new MediaFoundationResampler(wav, device.OutputWaveFormat) { ResamplerQuality = 60 };
-            var expectedSeconds = audio.Length / (double)device.OutputWaveFormat.AverageBytesPerSecond;
-            var deadline = TimeSpan.FromSeconds(expectedSeconds + 30); // 预期时长 + 30s 余量(慢设备/重采样开销)
+            // 超时基准 = 源 WAV 自身的时长(重采样不改变时长)。不能用设备混音格式的字节率:
+            // 源码率(如 32k16bit 单声道)通常远低于设备码率(48k float32 立体声),比值可达数倍,
+            // 长句会被算短、正常播放中途被超时掐断
+            var expectedSeconds = wav.Length / (double)wav.WaveFormat.AverageBytesPerSecond;
+            var deadline = TimeSpan.FromSeconds(expectedSeconds + 30); // 预期时长 + 30s 余量(慢设备/调度抖动)
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var chunk = new byte[Math.Max(4096, device.OutputWaveFormat.AverageBytesPerSecond / 4)];
             int n;
@@ -153,7 +156,7 @@ public sealed class TtsAudioPlayer
                     throw new TimeoutException($"playback stalled (drain): {sw.Elapsed.TotalSeconds:F0}s for a {expectedSeconds:F1}s clip");
                 Thread.Sleep(20);
             }
-            Log.Global.Info($"[TtsClient] play done: {expectedSeconds:F2}s pumped, buffer drained");
+            Log.Global.Info($"[TtsClient] play done: clip={expectedSeconds:F2}s, wall={sw.Elapsed.TotalSeconds:F2}s");
         }
     }
 
