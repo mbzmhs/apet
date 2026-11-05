@@ -20,6 +20,14 @@ public sealed class SearchFilesTool : BuiltinToolBase
     /// <summary>匹配行文本截断长度(GBK 老代码常见超长行,防单行撑爆结果)。</summary>
     internal const int MaxMatchTextChars = 500;
 
+    static SearchFilesTool()
+    {
+        // GBK 回退依赖 CodePagesEncodingProvider:它通常由 ToolJson 静态构造器注册,
+        // 但 auto 编码路径全程不触碰 ToolJson——若 search 是进程首个工具调用,回退时
+        // provider 未注册会抛 'gbk' is not a supported encoding name。此处自注册(幂等)。
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
+
     private readonly FileToolOptions _options;
 
     public SearchFilesTool(FileToolOptions? options = null)
@@ -95,17 +103,22 @@ public sealed class SearchFilesTool : BuiltinToolBase
         var totalMatches = 0L;
         var scanned = 0;
         var skipped = 0;
+        var scanTruncated = false;
         foreach (var file in EnumerateFiles(rootPath))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (scanned >= MaxScanFiles)
-                break;
             // glob 同时匹配相对路径与文件名:*.go 命中任意层级的文件名,**/*.go 命中相对路径
+            // (GetRelativePath 对尾分隔符/盘根等形态都安全,手切下标会错位)
             if (globRegex is not null)
             {
-                var relPath = file[(rootPath.Length + 1)..].Replace('\\', '/');
+                var relPath = Path.GetRelativePath(rootPath, file).Replace('\\', '/');
                 if (!globRegex.IsMatch(relPath) && !globRegex.IsMatch(Path.GetFileName(file)))
                     continue;
+            }
+            if (scanned >= MaxScanFiles)
+            {
+                scanTruncated = true; // 枚举未走完:如实标注,防止"已搜遍全树"的假阴性结论
+                break;
             }
             scanned++;
             var info = new FileInfo(file);
@@ -141,7 +154,7 @@ public sealed class SearchFilesTool : BuiltinToolBase
             ["total_matches"] = totalMatches,
             ["scanned_files"] = scanned,
             ["skipped_files"] = skipped,
-            ["truncated"] = totalMatches > results.Count,
+            ["truncated"] = totalMatches > results.Count || scanTruncated,
             ["results"] = results,
         };
         return Task.FromResult(JsonSerializer.Serialize(payload, ToolJson.Options));
@@ -153,7 +166,9 @@ public sealed class SearchFilesTool : BuiltinToolBase
         if (string.IsNullOrWhiteSpace(path))
             path = _options.RootDirectory ?? ToolExecutionScope.WorkingDirectory
                 ?? Environment.CurrentDirectory;
-        return ResolvePath(null, path); // 根目录约束由枚举起点承担;绝对路径不越界判定与 read_file 同口径
+        // RootDirectory 非空时越界拒绝(与 read_file 完全同口径,兑现工具描述);
+        // 为空时不限,行为同 read_file
+        return ResolvePath(_options.RootDirectory, path);
     }
 
     private static IEnumerable<string> EnumerateFiles(string rootPath) =>
@@ -284,7 +299,8 @@ public sealed class SearchFilesTool : BuiltinToolBase
         return lines;
     }
 
-    /// <summary>glob → 正则:** 跨任意层级,* 与 ? 不跨分隔符;其余字符字面量,忽略大小写。</summary>
+    /// <summary>glob → 正则:** 跨任意层级(后随 / 时可匹配零层,根直下文件不漏),
+    /// * 与 ? 不跨分隔符;其余字符字面量,忽略大小写。</summary>
     internal static Regex GlobToRegex(string glob)
     {
         var sb = new StringBuilder("^", glob.Length * 2 + 8);
@@ -293,8 +309,17 @@ public sealed class SearchFilesTool : BuiltinToolBase
             var c = glob[i];
             if (c == '*' && i + 1 < glob.Length && glob[i + 1] == '*')
             {
-                sb.Append(".*");
-                i++;
+                // "**/" 匹配零或多层目录:**/*.go 也要命中搜索根直下的 x.go
+                if (i + 2 < glob.Length && glob[i + 2] == '/')
+                {
+                    sb.Append("(?:.*/)?");
+                    i += 2;
+                }
+                else
+                {
+                    sb.Append(".*");
+                    i++;
+                }
             }
             else if (c == '*')
                 sb.Append("[^/\\\\]*");
@@ -388,8 +413,8 @@ public sealed class FindFilesTool : BuiltinToolBase
                 break;
             }
             // 相对路径形态参与匹配:pattern 是相对搜索根的路径模式
-            var rel = file[(rootPath.Length + 1)..].Replace('\\', '/');
-            if (!regex.IsMatch(rel) && !regex.IsMatch(Path.GetFileName(file).Replace('\\', '/')))
+            var rel = Path.GetRelativePath(rootPath, file).Replace('\\', '/');
+            if (!regex.IsMatch(rel) && !regex.IsMatch(Path.GetFileName(file)))
                 continue;
             totalMatches++;
             if (results.Count < maxResults)
@@ -414,6 +439,8 @@ public sealed class FindFilesTool : BuiltinToolBase
         if (string.IsNullOrWhiteSpace(path))
             path = _options.RootDirectory ?? ToolExecutionScope.WorkingDirectory
                 ?? Environment.CurrentDirectory;
-        return ResolvePath(null, path);
+        // RootDirectory 非空时越界拒绝(与 read_file 完全同口径,兑现工具描述);
+        // 为空时不限,行为同 read_file
+        return ResolvePath(_options.RootDirectory, path);
     }
 }
