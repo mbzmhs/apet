@@ -100,6 +100,9 @@ public static class DangerousCommands
                     return true; // rm/Remove-Item 的陌生旗标:参数含义无法预判,从宽
                 continue;
             }
+            // 删除类命令的 "." / ".." 目标:语法上即"清空当前目录"(cmd 的 del . 形态)
+            if (arg is "." or "..")
+                return true;
             operands++;
             if (operands >= 2 || arg.Contains('*') || arg.Contains('?'))
                 return true; // 批量目标:语法上即批量,不展开求证
@@ -121,7 +124,9 @@ public static class DangerousCommands
             case "push":
                 return HasForce(sub);
             case "branch":
-                return sub.Any(a => SameText(a, "-D"));
+                // -D 即强删;--delete/-d 配 -f 同义(-f 把"未合并拒删"的保险关掉);--delete 单独是安全形态
+                var branchDelete = sub.Any(a => SameText(a, "-D") || SameText(a, "--delete") || SameText(a, "-d"));
+                return branchDelete && (sub.Any(a => SameText(a, "-D")) || HasForce(sub));
             default:
                 return false;
         }
@@ -141,11 +146,18 @@ public static class DangerousCommands
         return [];
     }
 
+    /// <summary>强制旗标识别(簇旗标从宽):-f/-fd 等含 f 的短簇、--force 精确名、+refspec
+    /// (git push origin +main 强推单个引用);--force-with-lease 是带保险的强推,不视为灾难。</summary>
     private static bool HasForce(List<string> args) =>
         args.Any(a =>
         {
+            if (a.StartsWith('+'))
+                return true; // +refspec:强推该引用
+            if (a.StartsWith("--"))
+                return SameText(a, "--force"); // 精确名;force-with-lease 等不命中
             var body = a.ToLowerInvariant().TrimStart('-');
-            return body is "f" or "force";
+            return body is "f" or "force"
+                || (a.StartsWith('-') && body.Contains('f') && body.All(c => char.IsLetter(c))); // -fd 等短簇
         });
 
     private static bool SameText(string a, string b) =>
