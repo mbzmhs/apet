@@ -491,6 +491,7 @@ async function handleEvent(type: string, data: any) {
     case 'tool_finished': {
       // callId 严格匹配(与 toolOutput.appendToolOutput 同规则):两侧都有 id 才可比,
       // 任一侧缺失即视为不同行——同名并发调用按名字会错配收口到别的行
+      let matched = false
       for (let i = steps.length - 1; i >= 0; i--) {
         const st: any = steps[i]
         if (st.kind !== 'tool' || !st.isRunning || st.toolName !== data.toolName) continue
@@ -509,7 +510,21 @@ async function handleEvent(type: string, data: any) {
           subRunId: data.subRunId ?? st.subRunId ?? null,
           subRunTitle: data.subRunTitle || st.subRunTitle || '',
         })
+        matched = true
         break
+      }
+      if (!matched) {
+        // tool_started 在活连接内丢失(SSE 缓冲溢出丢帧):直接从 finished 帧合成完整行收口,
+        // 不再静默丢帧——否则该次工具调用在聊天区整个消失,只能等重连快照补回
+        steps.push({
+          kind: 'tool', toolName: data.toolName, toolCallId: data.toolCallId ?? null,
+          displayName: data.displayName ?? data.toolName, summary: data.summary ?? '',
+          detail: data.detail ?? '', hasDetail: !!data.hasDetail, isRunning: false, isError: !!data.isError,
+          resultSummary: data.resultSummary ?? '', pathLink: data.pathLink ?? '',
+          statAdd: data.statAdd ?? '', statDel: data.statDel ?? '', diffLines: data.diffLines ?? [],
+          imageFiles: data.imageFiles ?? [], subRunId: data.subRunId ?? null, subRunTitle: data.subRunTitle ?? '',
+          isPlaceholder: false,
+        })
       }
       break
     }
